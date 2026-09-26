@@ -28,14 +28,10 @@ const programReceiverHost = document.getElementById('program-receivers');
 let selectedLayerId = '';
 let sceneSaveQueue = Promise.resolve();
 const instancesByKey = new Map();
-const worshipStyleTarget = document.getElementById('worship-style-target');
-const worshipStyleStatus = document.getElementById('worship-style-status');
-const worshipStyleCss = document.getElementById('worship-style-css');
-const worshipStyleColor = document.getElementById('worship-style-color');
-const worshipStyleSize = document.getElementById('worship-style-size');
-const worshipStyleFont = document.getElementById('worship-style-font');
+const worshipStyleEditor = document.getElementById('worship-style-editor');
 let worshipStyles = null;
 let worshipStyleInstanceKey = '';
+let worshipStyleSaveTimer = null;
 let scenes = [];
 let activeSceneId = 'camera-program';
 let selectedDevices = { cameraId: '', microphoneId: '' };
@@ -391,6 +387,8 @@ function renderCustomEditor() {
   }
   const layer = selectedLayer();
   layerProperties.hidden = !layer;
+  customEditor.classList.toggle('program-source-selected', layer?.type === 'program');
+  worshipStyleController.setLayer(layer?.type === 'program' ? layer : null);
   if (layer) {
     document.getElementById('layer-name').value = layer.name;
     document.getElementById('layer-text').value = layer.text;
@@ -400,12 +398,8 @@ function renderCustomEditor() {
     for (const id of ['layer-appearance-heading', 'layer-appearance-note', 'layer-appearance-fields']) {
       document.getElementById(id).hidden = layer.type === 'text';
     }
-    const defaults = document.getElementById('worship-defaults');
     document.getElementById('layer-transparent-label').hidden = layer.type !== 'program';
     document.getElementById('layer-transparent').checked = layer.transparent === true;
-    defaults.hidden = layer.type !== 'program';
-    if (layer.type === 'program') showWorshipStyle();
-    if (layer.type !== 'program') defaults.open = false;
     for (const input of layerProperties.querySelectorAll('[data-layer-field]')) {
       const key = input.dataset.layerField;
       const fallback = { brightness: 100, contrast: 100, saturation: 100, hue: 0 };
@@ -630,84 +624,37 @@ document.addEventListener('keydown', (event) => {
   persistScenes();
 });
 
-function showWorshipStyle() {
-  const css = selectedLayer()?.sourceStyles?.[worshipStyleTarget.value] ?? worshipStyles?.[worshipStyleTarget.value] ?? '';
-  worshipStyleCss.value = css;
-  const style = document.createElement('div').style;
-  style.cssText = css;
-  const color = style.getPropertyValue('color').trim();
-  worshipStyleColor.value = /^#[0-9a-f]{6}$/i.test(color) ? color : '#ffffff';
-  const size = style.getPropertyValue('font-size').trim().match(/^(\d+)px$/);
-  worshipStyleSize.value = size ? size[1] : '';
-  const font = style.getPropertyValue('font-family').replaceAll('"', '').trim();
-  worshipStyleFont.value = [...worshipStyleFont.options].some((option) => option.value === font) ? font : '';
+function scheduleWorshipStyleSave() {
+  window.clearTimeout(worshipStyleSaveTimer);
+  worshipStyleSaveTimer = window.setTimeout(() => persistScenes(), 120);
 }
+
+const worshipStyleController = window.SourceStyleEditor.create(worshipStyleEditor, (layer) => {
+  sendProgramSourceStyles(layer);
+  scheduleWorshipStyleSave();
+});
 
 async function loadWorshipStyles(key) {
   const instance = instancesByKey.get(key);
+  worshipStyleInstanceKey = key;
   if (!instance?.styleAvailable) {
     worshipStyles = null;
-    worshipStyleStatus.textContent = 'Source CSS is available when Worship connects.';
+    worshipStyleController.setBaseline(null, false);
+    worshipStyleController.setStatus('Worship defaults are unavailable right now. Source overrides still work and stay local to this source.');
     return;
   }
-  worshipStyleInstanceKey = key;
-  worshipStyleStatus.textContent = 'Loading Worship styles…';
+  worshipStyleController.setStatus('Loading Worship styles…');
   try {
     const styles = await window.liturgiaStream.getWorshipStyles(key);
     if (worshipStyleInstanceKey !== key) return;
     worshipStyles = styles;
-    showWorshipStyle();
-    worshipStyleStatus.textContent = 'Worship defaults loaded. Your edits apply only to the selected source.';
+    worshipStyleController.setBaseline(styles, true);
   } catch (error) {
-    worshipStyleStatus.textContent = `Could not load Worship styles: ${error.message}`;
+    worshipStyles = null;
+    worshipStyleController.setBaseline(null, false);
+    worshipStyleController.setStatus('Could not load Worship styles: ' + error.message);
   }
 }
-
-function updateWorshipStyleCss() {
-  const update = (css, property, value) => {
-    const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`(^|;)\\s*${escaped}\\s*:\\s*[^;]*;?`, 'i');
-    if (!value) return css.replace(pattern, '$1').replace(/;\s*;/g, ';').trim();
-    if (pattern.test(css)) return css.replace(pattern, (_, prefix) => `${prefix}${property}: ${value};`);
-    const trimmed = css.trim();
-    const separator = trimmed && !trimmed.endsWith(';') ? '; ' : trimmed ? ' ' : '';
-    return `${trimmed}${separator}${property}: ${value};`;
-  };
-  let css = worshipStyleCss.value;
-  css = update(css, 'color', worshipStyleColor.value);
-  css = update(css, 'font-size', worshipStyleSize.value ? `${worshipStyleSize.value}px` : '');
-  css = update(css, 'font-family', worshipStyleFont.value);
-  worshipStyleCss.value = css;
-}
-
-worshipStyleTarget.addEventListener('change', showWorshipStyle);
-for (const control of [worshipStyleColor, worshipStyleSize, worshipStyleFont]) {
-  control.addEventListener('change', updateWorshipStyleCss);
-}
-function saveWorshipStyle(css) {
-  const layer = selectedLayer();
-  if (layer?.type !== 'program') {
-    worshipStyleStatus.textContent = 'Select a Liturgia Program layer first.';
-    return;
-  }
-  if (css.length > 8192) {
-    worshipStyleStatus.textContent = 'Keep source CSS under 8192 characters.';
-    return;
-  }
-  layer.sourceStyles ||= {};
-  if (css.trim()) layer.sourceStyles[worshipStyleTarget.value] = css;
-  else delete layer.sourceStyles[worshipStyleTarget.value];
-  sendProgramSourceStyles(layer);
-  showWorshipStyle();
-  persistScenes();
-  worshipStyleStatus.textContent = 'Style saved for this source only.';
-}
-document.getElementById('save-worship-style').addEventListener('click', () => {
-  void saveWorshipStyle(worshipStyleCss.value);
-});
-document.getElementById('reset-worship-style').addEventListener('click', () => {
-  void saveWorshipStyle('');
-});
 
 function connectToInstance(key) {
   const instance = instancesByKey.get(key);
