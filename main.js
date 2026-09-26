@@ -133,6 +133,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#181a1b',
     title: 'Liturgia Stream',
+    icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
