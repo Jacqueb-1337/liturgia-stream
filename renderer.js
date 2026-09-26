@@ -352,7 +352,7 @@ function renderCustomEditor() {
     row.classList.toggle('selected', layer.id === selectedLayerId);
     const select = document.createElement('button');
     select.className = 'button secondary layer-select';
-    select.textContent = `${layer.visible ? '◉' : '○'} ${layer.name}`;
+    select.textContent = layer.name;
     select.title = 'Select layer';
     select.addEventListener('click', () => { selectedLayerId = layer.id; renderCustomEditor(); });
     select.addEventListener('contextmenu', (event) => {
@@ -371,7 +371,7 @@ function renderCustomEditor() {
       row.append(button);
     };
     row.append(select);
-    control(layer.visible ? '◉' : '○', 'Show or hide', () => {
+    control(layer.visible ? '◉' : '○', layer.visible ? 'Hide source' : 'Show source', () => {
       layer.visible = !layer.visible; renderCustomEditor(); applyScene(); persistScenes();
     });
     control(layer.locked ? '🔒' : '◇', 'Lock or unlock', () => {
@@ -535,13 +535,14 @@ editorInteraction.addEventListener('pointerdown', (event) => {
   const scene = currentScene();
   if (!scene?.custom || event.button !== 0) return;
   const { x, y } = pointerCanvasPosition(event);
-  const hit = (item) => item.visible && !item.locked &&
+  const hit = (item) => item.visible &&
     x >= item.x && y >= item.y && x <= item.x + item.width && y <= item.y + item.height;
   const layer = (selectedLayer() && hit(selectedLayer()) ? selectedLayer() : null) ||
     [...scene.layers].reverse().find(hit);
   if (!layer) { selectedLayerId = ''; renderCustomEditor(); return; }
   selectedLayerId = layer.id;
   renderCustomEditor();
+  if (layer.locked) return;
   const resize = x >= layer.x + layer.width - 30 && y >= layer.y + layer.height - 30;
   pointerDrag = { id: layer.id, x, y, original: { x: layer.x, y: layer.y, width: layer.width, height: layer.height }, resize };
   editorInteraction.setPointerCapture(event.pointerId);
@@ -598,7 +599,36 @@ layerMenu.addEventListener('click', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!layerMenu.contains(event.target)) layerMenu.hidden = true;
 });
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') layerMenu.hidden = true; });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') layerMenu.hidden = true;
+  const typing = event.target instanceof HTMLElement &&
+    (event.target.matches('input, textarea, select, [contenteditable="true"]'));
+  if (typing) return;
+  const scene = currentScene();
+  const layer = selectedLayer();
+  if (!scene?.custom || !layer) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+    event.preventDefault();
+    duplicateSelectedLayer();
+    return;
+  }
+  if (event.key === 'Delete') {
+    event.preventDefault();
+    document.getElementById('layer-remove').click();
+    return;
+  }
+  if (layer.locked || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const amount = event.shiftKey ? 10 : 1;
+  if (event.key === 'ArrowLeft') layer.x -= amount;
+  if (event.key === 'ArrowRight') layer.x += amount;
+  if (event.key === 'ArrowUp') layer.y -= amount;
+  if (event.key === 'ArrowDown') layer.y += amount;
+  layer.x = Math.max(-1920, Math.min(3840, layer.x));
+  layer.y = Math.max(-1080, Math.min(2160, layer.y));
+  renderCustomEditor();
+  persistScenes();
+});
 
 function showWorshipStyle() {
   const css = selectedLayer()?.sourceStyles?.[worshipStyleTarget.value] ?? worshipStyles?.[worshipStyleTarget.value] ?? '';

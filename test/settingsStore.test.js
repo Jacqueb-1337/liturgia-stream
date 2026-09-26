@@ -99,6 +99,19 @@ describe('Liturgia Stream settings store', () => {
     expect(loaded.devices).toEqual({ cameraId: 'camera-id', microphoneId: 'mic-id' });
   });
 
+  test('loads settings written with a UTF-8 BOM', async () => {
+    const settingsPath = path.join(directory, 'settings.json');
+    await fs.promises.writeFile(settingsPath, '\uFEFF' + JSON.stringify({
+      scenes: [{ id: 'program', name: 'Liturgia Fullscreen', cameraVisible: false, programVisible: true }],
+      activeSceneId: 'program'
+    }), 'utf8');
+
+    const loaded = await store.load();
+
+    expect(loaded.activeSceneId).toBe('program');
+    expect(loaded.scenes).toHaveLength(1);
+  });
+
   test('refuses to save a stream key if secure storage is unavailable', async () => {
     safeStorage.isEncryptionAvailable.mockReturnValue(false);
     await expect(store.save({

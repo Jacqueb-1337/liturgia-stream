@@ -19,7 +19,8 @@ function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
 
   async function readRaw() {
     try {
-      return JSON.parse(await fileSystem.promises.readFile(filePath, 'utf8'));
+      const text = await fileSystem.promises.readFile(filePath, 'utf8');
+      return JSON.parse(text.replace(/^\uFEFF/, ''));
     } catch (error) {
       if (error.code === 'ENOENT') return {};
       throw error;
