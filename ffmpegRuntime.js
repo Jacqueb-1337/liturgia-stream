@@ -128,7 +128,7 @@ function buildWebmOutputArgs(options = {}) {
     '-r', String(fps),
     '-c:v', encoder
   ];
-  if (encoder === 'h264_nvenc') args.push('-preset', 'p4', '-tune', 'll');
+  if (encoder === 'h264_nvenc') args.push('-preset', 'p4', '-tune', 'll', '-rc', 'cbr');
   else if (encoder === 'h264_qsv') args.push('-preset', 'medium');
   else if (encoder === 'h264_amf') args.push('-quality', 'speed');
   else args.push('-preset', 'veryfast', '-tune', 'zerolatency');

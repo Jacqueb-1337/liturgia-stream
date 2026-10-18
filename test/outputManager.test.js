@@ -4,12 +4,12 @@ const { StreamOutputManager, RECONNECT_DELAYS_MS } = require('../outputManager')
 function makeChild() {
   const child = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.stdin = {
+  child.stdin = Object.assign(new EventEmitter(), {
     destroyed: false,
     writable: true,
     write: jest.fn((_buffer, callback) => callback()),
     end: jest.fn(() => setTimeout(() => child.emit('close', 0), 0))
-  };
+  });
   child.kill = jest.fn(() => child.emit('close', 1));
   return child;
 }
@@ -104,6 +104,25 @@ describe('Liturgia Stream output manager', () => {
       warn.mockRestore();
       await manager.stop();
     }
+  });
+
+  test('handles asynchronous EPIPE events on encoder stdin without crashing Electron', async () => {
+    const child = makeChild();
+    const manager = new StreamOutputManager({
+      spawnProcess: () => child,
+      setTimeout: () => 1,
+      clearTimeout: jest.fn()
+    });
+    const states = [];
+    manager.on('status', (status) => states.push(status));
+    await manager.start(createConfig());
+    child.emit('spawn');
+    expect(() => child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).not.toThrow();
+    child.stderr.emit('data', Buffer.from('Error opening output: server rejected connection\n'));
+    child.emit('close', 1);
+    expect(states.at(-1)).toMatchObject({ state: 'reconnecting' });
+    expect(states.at(-1).error).toContain('server rejected connection');
+    await manager.stop();
   });
 
   test('falls back to software when a hardware encoder cannot initialize', async () => {

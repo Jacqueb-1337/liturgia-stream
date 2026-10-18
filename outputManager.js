@@ -93,6 +93,15 @@ class StreamOutputManager extends EventEmitter {
       }
       this.handleProgress(chunk);
     });
+    // A child process can close stdin before its own 'close' event. Node emits
+    // EPIPE on the writable stream independently of the write callback; without
+    // this listener Electron treats it as an uncaught main-process exception.
+    child.stdin?.on('error', (error) => {
+      if (this.child === child && !this.stopRequested && !this.lastError) {
+        this.lastError = error.message || String(error);
+      }
+      // Let the child 'close' event finish recovery so we retain FFmpeg stderr.
+    });
     child.once('error', (error) => finish(error));
     child.once('close', (code) => finish(code === 0 ? null : new Error(this.lastError || `FFmpeg exited with code ${code}.`)));
   }

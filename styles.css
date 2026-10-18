@@ -43,6 +43,10 @@ h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
 .button.primary:not(:disabled):hover { background: var(--accent-hover); }
 .button.secondary { color: var(--text); background: var(--surface-raised); border-color: var(--border); }
 .button.secondary:hover { background: #353a3c; }
+.action-confirm { width: min(380px, calc(100vw - 40px)); padding: 22px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface-raised); box-shadow: 0 15px 45px #0009; }
+.action-confirm::backdrop { background: #0009; }
+.action-confirm p { margin: 0 0 22px; line-height: 1.5; }
+.action-confirm-buttons { display: flex; justify-content: flex-end; gap: 10px; }
 .wide { width: 100%; margin-top: 19px; padding: 12px; }
 .live-layout { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: start; }
 .card, .preview-card, .device-card, .empty-card { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
@@ -84,6 +88,7 @@ h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
 #worship-style-color { padding: 3px; cursor: pointer; }
 .style-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .encoder-details .helper { margin: 8px 0 0; }
+.apply-live-settings { margin: 9px 0 16px; text-align: center; }
 .inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .empty-card { max-width: 690px; padding: 40px; text-align: center; }
 .empty-card p { color: var(--muted); font-size: 13px; line-height: 1.6; }

@@ -47,7 +47,7 @@
           <div class="card service-card">
             <p class="eyebrow">STREAM STATUS</p>
             <div class="offline-state" id="stream-status"><span class="large-dot"></span><span id="stream-status-label">Not streaming</span></div>
-            <button class="button primary wide" id="go-live">Go Live</button>
+            <button class="button primary wide" id="go-live">Connect Stream</button>
             <p class="helper" id="stream-status-detail">Choose a destination and devices, then go live.</p>
             <p class="stream-elapsed" id="stream-elapsed" hidden>Duration 00:00:00</p>
           </div>
@@ -168,10 +168,18 @@
         <div class="encoder-row"><span>Encoder</span><strong>Automatic</strong></div>
         <details class="encoder-details"><summary>Advanced encoder details</summary><p id="encoder-info" class="helper">Checking FFmpeg encoders…</p></details>
         <button class="button primary" id="save-destination">Save destination</button>
+        <button class="button secondary apply-live-settings" id="apply-live-settings" hidden>Apply saved settings to stream (reconnect)</button>
         <p id="destination-status" class="helper" role="status">Enter your destination once and it will be ready for next Sunday.</p>
       </div>
     </section>
   </main>
+  <dialog id="action-confirm" class="action-confirm" aria-labelledby="action-confirm-message">
+    <p id="action-confirm-message"></p>
+    <form method="dialog" class="action-confirm-buttons">
+      <button type="submit" value="cancel" class="button secondary">Cancel</button>
+      <button type="submit" value="confirm" id="action-confirm-accept" class="button primary">Continue</button>
+    </form>
+  </dialog>
   <div id="layer-context-menu" class="layer-context-menu" role="menu" hidden><button role="menuitem" data-menu-action="edit">Edit source</button><button role="menuitem" data-menu-action="duplicate">Duplicate source</button><button role="menuitem" data-menu-action="fit">Fit canvas</button><button role="menuitem" data-menu-action="remove">Remove source</button></div>
   <div id="program-receivers" aria-hidden="true"></div>
   <script src="sourceStyleEditor.js"></script>

@@ -1,3 +1,22 @@
+const actionConfirmDialog = document.getElementById('action-confirm');
+const actionConfirmMessage = document.getElementById('action-confirm-message');
+const actionConfirmAccept = document.getElementById('action-confirm-accept');
+
+function confirmAction(message, acceptLabel) {
+  if (actionConfirmDialog.open) return Promise.resolve(false);
+  const previousFocus = document.activeElement;
+  actionConfirmMessage.textContent = message;
+  actionConfirmAccept.textContent = acceptLabel;
+  actionConfirmDialog.returnValue = 'cancel';
+  return new Promise((resolve) => {
+    actionConfirmDialog.addEventListener('close', () => {
+      resolve(actionConfirmDialog.returnValue === 'confirm');
+      if (previousFocus?.isConnected) previousFocus.focus();
+    }, { once: true });
+    actionConfirmDialog.showModal();
+  });
+}
+
 const tabs = [...document.querySelectorAll('.tab')];
 const pages = [...document.querySelectorAll('.page')];
 const instanceList = document.getElementById('instance-list');
@@ -420,9 +439,9 @@ document.getElementById('create-custom-scene').addEventListener('click', () => {
   renderScenes();
   persistScenes();
 });
-document.getElementById('remove-custom-scene').addEventListener('click', () => {
+document.getElementById('remove-custom-scene').addEventListener('click', async () => {
   const scene = currentScene();
-  if (!scene?.custom || !window.confirm(`Delete “${scene.name}”?`)) return;
+  if (!scene?.custom || !(await confirmAction(`Delete “${scene.name}”?`, 'Delete scene'))) return;
   scenes = scenes.filter((item) => item !== scene);
   activeSceneId = scenes[0].id;
   selectedLayerId = '';
@@ -873,6 +892,8 @@ const presetOutput = {
 };
 const destinationStatus = document.getElementById('destination-status');
 const saveDestinationButton = document.getElementById('save-destination');
+const applyLiveSettingsButton = document.getElementById('apply-live-settings');
+let pendingSavedStreamConfig = null;
 
 async function loadEncoderInfo() {
   const infoElement = document.getElementById('encoder-info');
@@ -933,7 +954,15 @@ saveDestinationButton.addEventListener('click', async () => {
     });
     document.getElementById('stream-key').value = '';
     document.getElementById('stream-key').placeholder = 'Saved securely · leave blank to keep';
-    destinationStatus.textContent = `“${config.destination.name}” saved securely on this computer.`;
+    if (outputActive) {
+      pendingSavedStreamConfig = config;
+      applyLiveSettingsButton.hidden = false;
+      destinationStatus.textContent = `Saved. The current stream is still using ${currentOutputConfig.videoBitrateKbps} kbps video. Apply the saved settings to reconnect, or leave them for next time.`;
+    } else {
+      pendingSavedStreamConfig = null;
+      applyLiveSettingsButton.hidden = true;
+      destinationStatus.textContent = `“${config.destination.name}” saved securely on this computer.`;
+    }
   } catch (error) {
     destinationStatus.textContent = error.message;
   } finally {
@@ -943,6 +972,7 @@ saveDestinationButton.addEventListener('click', async () => {
 
 let outputActive = false;
 let userStoppingOutput = false;
+let applyingStreamSettings = false;
 let outputAudioContext = null;
 let outputSilentSource = null;
 let outputCanvasStream = null;
@@ -1079,28 +1109,31 @@ async function handleOutputStatus(status) {
       updateStreamElapsed();
       outputClockTimer = window.setInterval(updateStreamElapsed, 1000);
     }
-    streamStatusLabel.textContent = 'LIVE';
+    streamStatusLabel.textContent = 'Sending video';
     largeStatusDot.classList.add('live');
     const fps = Number.isFinite(status.fps) ? `${Math.round(status.fps)} FPS` : 'Sending video';
     const bitrate = status.bitrate ? ` · ${status.bitrate}` : '';
-    const dropped = Number.isFinite(status.droppedFrames) ? ` ? ${status.droppedFrames} dropped` : ``;
-    const resolution = `${currentOutputConfig.width}?${currentOutputConfig.height}`;
-    streamStatusDetail.textContent = `${resolution} ? ${fps}${bitrate}${dropped}`;
+    const dropped = Number.isFinite(status.droppedFrames) ? ` | ${status.droppedFrames} dropped` : '';
+    const resolution = `${currentOutputConfig.width}x${currentOutputConfig.height}`;
+    streamStatusDetail.textContent = `${resolution} @ ${fps}${bitrate}${dropped}`;
   } else if (status.state === 'reconnecting') {
     streamStatusLabel.textContent = 'Connection lost';
     largeStatusDot.classList.remove('live');
     const delay = status.retryInMs ? ` Retrying in ${Math.ceil(status.retryInMs / 1000)} seconds.` : ' Retrying now.';
     const rejected = /Error opening output|Error opening output files|IO error: End of file/i.test(status.error || '');
+    const reason = String(status.error || '').trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' ').slice(0, 220);
     if (rejected) streamStatusLabel.textContent = 'Destination disconnected';
     streamStatusDetail.textContent = rejected
-      ? `The streaming service closed the connection. Check that your stream key and broadcast session are current.${delay}`
-      : `Reconnecting…${delay}`;
+      ? `The destination closed the connection. Check its stream key and broadcast setup.${delay}${reason ? ` Encoder: ${reason}` : ''}`
+      : `${reason ? `Encoder: ${reason}` : 'Connection interrupted.'}${delay}`;
     outputReconnectPreparation = stopOutputRecorder();
   } else if (status.state === 'stopping') {
     streamStatusLabel.textContent = 'Ending stream…';
   } else if (status.state === 'stopped') {
     outputActive = false;
     userStoppingOutput = false;
+    pendingSavedStreamConfig = null;
+    applyLiveSettingsButton.hidden = true;
     outputStartedAt = 0;
     if (outputClockTimer !== null) window.clearInterval(outputClockTimer);
     outputClockTimer = null;
@@ -1109,16 +1142,17 @@ async function handleOutputStatus(status) {
     largeStatusDot.classList.remove('live');
     streamStatusLabel.textContent = 'Not streaming';
     streamStatusDetail.textContent = 'Your settings are saved for next time.';
-    goLiveButton.textContent = 'Go Live';
+    goLiveButton.textContent = 'Connect Stream';
     goLiveButton.disabled = false;
   } else if (status.state === 'connecting') {
     streamStatusLabel.textContent = 'Starting…';
     streamStatusDetail.textContent = status.message || 'Starting the stream encoder.';
   }
   if (outputActive && status.state !== 'stopped') {
-    goLiveButton.textContent = 'End Stream';
-    goLiveButton.disabled = false;
+    goLiveButton.textContent = 'Disconnect';
+    goLiveButton.disabled = applyingStreamSettings;
   }
+  if (applyingStreamSettings) goLiveButton.disabled = true;
 }
 
 async function stopLiveStream() {
@@ -1156,15 +1190,47 @@ async function startLiveStream(config) {
     await window.liturgiaStream.startOutput();
   } catch (error) {
     outputActive = false;
-    goLiveButton.textContent = 'Go Live';
+    goLiveButton.textContent = 'Connect Stream';
     goLiveButton.disabled = false;
     throw error;
   }
 }
 
+applyLiveSettingsButton.addEventListener('click', async () => {
+  if (!outputActive || !pendingSavedStreamConfig || applyingStreamSettings) return;
+  const approved = await confirmAction(
+    'Applying new encoder settings requires a brief stream disconnect. Facebook may interrupt an active broadcast. Reconnect now?',
+    'Reconnect now'
+  );
+  if (!approved || !outputActive || !pendingSavedStreamConfig || applyingStreamSettings) return;
+  const config = pendingSavedStreamConfig;
+  applyingStreamSettings = true;
+  applyLiveSettingsButton.disabled = true;
+  goLiveButton.disabled = true;
+  destinationStatus.textContent = 'Restarting encoder with saved settings. Facebook may briefly lose the feed.';
+  try {
+    await stopLiveStream();
+    await startLiveStream(config);
+    pendingSavedStreamConfig = null;
+    applyLiveSettingsButton.hidden = true;
+    destinationStatus.textContent = `Reconnecting at ${config.output.videoBitrateKbps} kbps video. Check Live for the incoming bitrate.`;
+  } catch (error) {
+    destinationStatus.textContent = `Could not reconnect: ${error.message}`;
+    if (!outputActive) {
+      goLiveButton.textContent = 'Connect Stream';
+      goLiveButton.disabled = false;
+    }
+  } finally {
+    applyingStreamSettings = false;
+    applyLiveSettingsButton.disabled = false;
+    goLiveButton.disabled = false;
+  }
+});
+
 goLiveButton.addEventListener('click', async () => {
+  if (applyingStreamSettings) return;
   if (outputActive) {
-    if (!window.confirm('End the current stream?')) return;
+    if (!(await confirmAction('Disconnect Liturgia Stream from the streaming destination?', 'Disconnect'))) return;
     try { await stopLiveStream(); }
     catch (error) { streamStatusDetail.textContent = error.message; }
     return;
@@ -1176,14 +1242,14 @@ goLiveButton.addEventListener('click', async () => {
     streamStatusDetail.textContent = error.message;
     return;
   }
-  if (!window.confirm('Start streaming now?')) return;
+  if (!(await confirmAction('Connect to your streaming destination? The broadcast will not become public until you go live on the platform.', 'Connect'))) return;
   goLiveButton.disabled = true;
   try {
     await startLiveStream(config);
   } catch (error) {
     streamStatusLabel.textContent = 'Not streaming';
     streamStatusDetail.textContent = error.message;
-    goLiveButton.textContent = 'Go Live';
+    goLiveButton.textContent = 'Connect Stream';
     goLiveButton.disabled = false;
   }
 });

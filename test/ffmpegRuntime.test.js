@@ -96,10 +96,23 @@ describe('Liturgia Stream FFmpeg runtime', () => {
     expect(args.slice(args.indexOf('-f'), args.indexOf('-f') + 4)).toEqual(['-f', 'webm', '-i', 'pipe:0']);
     expect(args).toEqual(expect.arrayContaining([
       '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'h264_nvenc',
-      '-preset', 'p4', '-b:v', '6000k', '-maxrate', '6000k',
+      '-preset', 'p4', '-rc', 'cbr', '-b:v', '6000k', '-maxrate', '6000k',
       '-g', '60', '-bf', '0', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
       '-f', 'flv', 'rtmps://example/live/key'
+    ]));
+  });
+
+  test('uses the newly requested 2 Mbps rate when restarting the encoder', () => {
+    const args = buildWebmOutputArgs({
+      width: 1920, height: 1080, fps: 30,
+      videoBitrateKbps: 2000, audioBitrateKbps: 160,
+      audioSampleRate: 48000, encoder: 'h264_nvenc',
+      outputUrl: 'rtmps://example/live/key'
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      '-rc', 'cbr', '-b:v', '2000k', '-minrate', '2000k',
+      '-maxrate', '2000k', '-bufsize', '4000k'
     ]));
   });
 
