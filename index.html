@@ -21,7 +21,7 @@
           <p id="update-message" class="helper" role="status">Checking version…</p>
           <div id="update-notes" class="update-notes" hidden></div>
           <div id="update-progress" class="update-progress" hidden><div class="update-progress-track"><div id="update-progress-bar" class="update-progress-bar"></div></div><span id="update-percent">0%</span></div>
-          <p id="update-safety" class="helper update-safety" hidden>Disconnect your stream before running this update.</p>
+          <p id="update-safety" class="update-safety" role="alert" hidden><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> <strong>Update paused: streaming is active.</strong> Stop all outputs, including any still connecting or retrying, before installing. Your download is ready and will be kept.</p>
           <div class="update-actions">
             <button class="button secondary" type="button" id="update-check">Check now</button>
             <button class="button secondary" type="button" id="update-release" hidden>Release notes</button>

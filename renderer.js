@@ -2072,9 +2072,12 @@ function renderUpdateStatus(status) {
   updateUi.release.hidden = !['available', 'downloading', 'downloaded'].includes(phase);
   updateUi.download.hidden = phase !== 'available';
   updateUi.download.disabled = phase !== 'available';
+  const outputsRunning = outputActive || [...destinationStates.values()].some(s => s !== 'offline' && s !== 'stopped');
   updateUi.run.hidden = !ready;
-  updateUi.run.disabled = !ready || outputActive;
-  updateUi.safety.hidden = !ready || !outputActive;
+  updateUi.run.disabled = !ready || outputsRunning;
+  updateUi.run.title = outputsRunning ? 'Stop all streaming outputs before installing this update' : 'Install downloaded update';
+  updateUi.run.setAttribute('aria-describedby', outputsRunning ? 'update-safety' : 'update-message');
+  updateUi.safety.hidden = !ready || !outputsRunning;
 }
 updateUi.toggle.addEventListener('click', () => setUpdatePopoverOpen(updateUi.panel.hidden));
 updateUi.close.addEventListener('click', () => setUpdatePopoverOpen(false));
@@ -2100,7 +2103,10 @@ updateUi.download.addEventListener('click', async () => {
   } catch (error) { updateUi.message.textContent = error.message; }
 });
 updateUi.run.addEventListener('click', async () => {
-  if (outputActive) return;
+  if (outputActive || [...destinationStates.values()].some(s => s !== 'offline' && s !== 'stopped')) {
+    renderUpdateStatus(currentUpdateState);
+    return;
+  }
   updateUi.run.disabled = true;
   try {
     const result = await window.liturgiaStream.runUpdate();

@@ -40,7 +40,9 @@ button, input, select { font: inherit; }
 .update-progress { display: flex; align-items: center; gap: 9px; margin: 12px 0; color: var(--muted); font-size: 11px; }
 .update-progress-track { flex: 1; height: 8px; border-radius: 20px; overflow: hidden; background: #131515; }
 .update-progress-bar { width: 0%; height: 100%; background: var(--accent-hover); transition: width .12s linear; }
-.update-safety { color: #e9bc72 !important; }
+.update-safety { color: #ffe0a3; background: #3a2a14; border: 1px solid #b98639; border-left: 4px solid #efb451; border-radius: 7px; padding: 12px; margin: 12px 0; font-size: 13px; line-height: 1.5; }
+.update-safety i { margin-right: 5px; }
+.update-actions #update-run:disabled { background: #454b50 !important; color: #aeb5ba !important; border: 1px solid #62696d !important; opacity: 1 !important; cursor: not-allowed; }
 .update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .update-actions .button { font-size: 12px; padding: 8px 10px; }
 @media (max-width: 650px) { .app-header { padding: 0 14px; } .header-actions { gap: 8px; } .update-popover { right: -8px; } }
