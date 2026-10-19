@@ -123,7 +123,14 @@ jobs:
           fi
 
           # Ensure release exists or create it (suppress "already exists" error from parallel jobs)
-          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes --repo "$REPO" || true
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -Fxv "$TAG" | head -n 1 || true)
+          if [ -n "$PREVIOUS_TAG" ]; then
+            git log --pretty='- %s' --no-merges "$PREVIOUS_TAG..$TAG" | grep -Ev '^- (chore: release |[Rr]elease v?[0-9])' > release-notes.md || true
+          else
+            git log -10 --pretty='- %s' --no-merges | grep -Ev '^- (chore: release |[Rr]elease v?[0-9])' > release-notes.md || true
+          fi
+          if [ ! -s release-notes.md ]; then printf 'Maintenance and reliability improvements.\n' > release-notes.md; fi
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && gh release edit "$TAG" --notes-file release-notes.md --repo "$REPO" || gh release create "$TAG" --notes-file release-notes.md --repo "$REPO"
 
           files_to_upload=(dist/*)
           echo "Files to upload: ${files_to_upload[*]}"
