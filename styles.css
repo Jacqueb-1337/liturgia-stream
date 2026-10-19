@@ -23,6 +23,24 @@ button, input, select { font: inherit; }
 .status-dot, .large-dot { width: 9px; height: 9px; border-radius: 50%; background: #a8afb2; display: inline-block; }
 .header-status.connected { color: var(--text); }
 .header-status.connected .status-dot { background: var(--green); }
+.header-actions { display: flex; align-items: center; gap: 17px; }
+.update-anchor { position: relative; }
+.update-toggle { position: relative; display: grid; place-items: center; width: 35px; height: 35px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.update-toggle:hover, .update-toggle[aria-expanded="true"] { color: var(--text); background: var(--surface-raised); }
+.update-indicator { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; background: var(--accent-hover); border-radius: 50%; box-shadow: 0 0 0 2px var(--bg); }
+.update-indicator.ready { background: var(--green); }
+.update-popover { position: absolute; right: 0; top: calc(100% + 10px); z-index: 40; width: min(365px, calc(100vw - 24px)); padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 16px 45px #0009; }
+.update-popover-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-size: 14px; }
+.update-popover-head button { cursor: pointer; border: 0; color: var(--muted); background: transparent; font-size: 22px; line-height: 1; }
+.update-popover .helper { margin: 8px 0; }
+.update-notes { max-height: 155px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); background: #1b1e20; border-radius: 6px; padding: 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.update-progress { display: flex; align-items: center; gap: 9px; margin: 12px 0; color: var(--muted); font-size: 11px; }
+.update-progress-track { flex: 1; height: 8px; border-radius: 20px; overflow: hidden; background: #131515; }
+.update-progress-bar { width: 0%; height: 100%; background: var(--accent-hover); transition: width .12s linear; }
+.update-safety { color: #e9bc72 !important; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.update-actions .button { font-size: 12px; padding: 8px 10px; }
+@media (max-width: 650px) { .app-header { padding: 0 14px; } .header-actions { gap: 8px; } .update-popover { right: -8px; } }
 .tabs { height: 57px; display: flex; align-items: stretch; gap: 24px; padding: 0 30px; border-bottom: 1px solid var(--border); }
 .tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); padding: 0 3px; cursor: pointer; }
 .tab:hover { color: var(--text); }

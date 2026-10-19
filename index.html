@@ -9,7 +9,28 @@
 <body>
   <header class="app-header">
     <div class="brand"><span class="brand-mark">L</span><span>Liturgia <strong>Stream</strong></span></div>
-    <div class="header-status"><span class="status-dot"></span><span id="worship-status">Looking for Worship</span></div>
+    <div class="header-actions">
+      <div class="update-anchor">
+        <button id="update-toggle" class="update-toggle" type="button" aria-label="Check for Liturgia Stream updates" aria-expanded="false" aria-controls="update-popover" title="Updates">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.6 6"/><path d="M20 4v7h-7"/></svg>
+          <span id="update-indicator" class="update-indicator" hidden></span>
+        </button>
+        <section id="update-popover" class="update-popover" aria-labelledby="update-title" hidden>
+          <div class="update-popover-head"><strong id="update-title">Liturgia Stream updates</strong><button id="update-close" type="button" aria-label="Close updates">×</button></div>
+          <p id="update-message" class="helper" role="status">Checking version…</p>
+          <div id="update-notes" class="update-notes" hidden></div>
+          <div id="update-progress" class="update-progress" hidden><div class="update-progress-track"><div id="update-progress-bar" class="update-progress-bar"></div></div><span id="update-percent">0%</span></div>
+          <p id="update-safety" class="helper update-safety" hidden>Disconnect your stream before running this update.</p>
+          <div class="update-actions">
+            <button class="button secondary" type="button" id="update-check">Check now</button>
+            <button class="button secondary" type="button" id="update-release" hidden>Release notes</button>
+            <button class="button primary" type="button" id="update-download" hidden>Download</button>
+            <button class="button primary" type="button" id="update-run" hidden>Run update</button>
+          </div>
+        </section>
+      </div>
+      <div class="header-status"><span class="status-dot"></span><span id="worship-status">Looking for Worship</span></div>
+    </div>
   </header>
 
   <nav class="tabs" aria-label="Main sections">

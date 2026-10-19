@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld('liturgiaStream', {
   getWorshipStyles: (key) => ipcRenderer.invoke('worship:styles:get', key),
   saveWorshipStyles: (key, styles) => ipcRenderer.invoke('worship:styles:save', key, styles),
   getConfig: () => ipcRenderer.invoke('stream:config:get'),
+  getUpdateStatus: () => ipcRenderer.invoke('stream:update:get'),
+  checkForUpdates: () => ipcRenderer.invoke('stream:update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('stream:update:download'),
+  runUpdate: () => ipcRenderer.invoke('stream:update:run'),
+  openReleasePage: () => ipcRenderer.invoke('stream:update:release'),
+  onUpdateStatus: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('stream:update:status', listener);
+    return () => ipcRenderer.removeListener('stream:update:status', listener);
+  },
   getEncoderInfo: () => ipcRenderer.invoke('stream:encoder:info'),
   saveConfig: (config) => ipcRenderer.invoke('stream:config:save', config),
   startOutput: () => ipcRenderer.invoke('stream:output:start'),

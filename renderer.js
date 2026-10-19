@@ -1153,6 +1153,8 @@ async function handleOutputStatus(status) {
     goLiveButton.disabled = applyingStreamSettings;
   }
   if (applyingStreamSettings) goLiveButton.disabled = true;
+  // Keep Run Update disabled if a stream starts after the download completed.
+  if (typeof currentUpdateState !== 'undefined') renderUpdateStatus(currentUpdateState);
 }
 
 async function stopLiveStream() {
@@ -1267,3 +1269,97 @@ refreshVideoDevices();
 refreshAudioDevices();
 loadStreamConfig();
 loadEncoderInfo();
+
+// Update controls deliberately mirror Worship's notice -> progress -> Run flow.
+// Nothing installs automatically; the main process also rejects Run while streaming.
+const updateUi = {
+  anchor: document.querySelector('.update-anchor'),
+  toggle: document.getElementById('update-toggle'),
+  panel: document.getElementById('update-popover'),
+  close: document.getElementById('update-close'),
+  indicator: document.getElementById('update-indicator'),
+  message: document.getElementById('update-message'),
+  notes: document.getElementById('update-notes'),
+  progress: document.getElementById('update-progress'),
+  bar: document.getElementById('update-progress-bar'),
+  percent: document.getElementById('update-percent'),
+  safety: document.getElementById('update-safety'),
+  check: document.getElementById('update-check'),
+  release: document.getElementById('update-release'),
+  download: document.getElementById('update-download'),
+  run: document.getElementById('update-run')
+};
+let currentUpdateState = { phase: 'idle', supported: false };
+function setUpdatePopoverOpen(open) {
+  updateUi.panel.hidden = !open;
+  updateUi.toggle.setAttribute('aria-expanded', String(open));
+}
+function renderUpdateStatus(status) {
+  currentUpdateState = status;
+  const phase = status.phase || 'idle';
+  const version = status.latestVersion || '';
+  const ready = phase === 'downloaded';
+  updateUi.indicator.hidden = !(phase === 'available' || phase === 'downloading' || ready);
+  updateUi.indicator.classList.toggle('ready', ready);
+  updateUi.toggle.title = ready ? `Update ${version} ready to install` : phase === 'available' ? `Update ${version} available` : 'Check for updates';
+  const messages = {
+    idle: `Installed version ${status.currentVersion}.`,
+    checking: 'Checking GitHub for updates…',
+    available: `Update ${version} is available (installed ${status.currentVersion}).`,
+    current: `Liturgia Stream ${status.currentVersion} is up to date.`,
+    downloading: `Downloading update ${version}…`,
+    downloaded: `Update ${version} downloaded and ready to install.`,
+    unsupported: 'Automatic updates are available in installed builds (Windows, macOS, or Linux AppImage).',
+    error: `Update check failed: ${status.error || 'Unknown error'}`
+  };
+  updateUi.message.textContent = messages[phase] || messages.idle;
+  updateUi.notes.hidden = !status.releaseNotes || !['available', 'downloading', 'downloaded'].includes(phase);
+  updateUi.notes.textContent = status.releaseNotes || '';
+  updateUi.progress.hidden = !['downloading', 'downloaded'].includes(phase);
+  const percent = Math.max(0, Math.min(100, Number(status.percent) || 0));
+  updateUi.bar.style.width = `${percent}%`;
+  updateUi.percent.textContent = `${Math.round(percent)}%`;
+  updateUi.check.disabled = phase === 'checking' || phase === 'downloading';
+  updateUi.release.hidden = !['available', 'downloading', 'downloaded'].includes(phase);
+  updateUi.download.hidden = phase !== 'available';
+  updateUi.download.disabled = phase !== 'available';
+  updateUi.run.hidden = !ready;
+  updateUi.run.disabled = !ready || outputActive;
+  updateUi.safety.hidden = !ready || !outputActive;
+}
+updateUi.toggle.addEventListener('click', () => setUpdatePopoverOpen(updateUi.panel.hidden));
+updateUi.close.addEventListener('click', () => setUpdatePopoverOpen(false));
+document.addEventListener('pointerdown', (event) => {
+  if (!updateUi.panel.hidden && !updateUi.anchor.contains(event.target)) setUpdatePopoverOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !updateUi.panel.hidden) setUpdatePopoverOpen(false);
+});
+updateUi.check.addEventListener('click', async () => {
+  try { renderUpdateStatus(await window.liturgiaStream.checkForUpdates()); }
+  catch (error) { updateUi.message.textContent = `Could not check for updates: ${error.message}`; }
+});
+updateUi.release.addEventListener('click', async () => {
+  try { await window.liturgiaStream.openReleasePage(); }
+  catch (error) { updateUi.message.textContent = error.message; }
+});
+updateUi.download.addEventListener('click', async () => {
+  updateUi.download.disabled = true;
+  try {
+    const result = await window.liturgiaStream.downloadUpdate();
+    if (!result.ok) updateUi.message.textContent = result.error;
+  } catch (error) { updateUi.message.textContent = error.message; }
+});
+updateUi.run.addEventListener('click', async () => {
+  if (outputActive) return;
+  updateUi.run.disabled = true;
+  try {
+    const result = await window.liturgiaStream.runUpdate();
+    if (!result.ok) updateUi.message.textContent = result.error;
+  } catch (error) { updateUi.message.textContent = error.message; }
+  finally { updateUi.run.disabled = outputActive || currentUpdateState.phase !== 'downloaded'; }
+});
+window.liturgiaStream.onUpdateStatus(renderUpdateStatus);
+window.liturgiaStream.getUpdateStatus().then(renderUpdateStatus).catch((error) => {
+  updateUi.message.textContent = `Could not load update status: ${error.message}`;
+});

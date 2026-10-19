@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, session, safeStorage, dialog } = require('e
 const { createSettingsStore } = require('./settingsStore');
 const { executableCandidates, probeFirstAvailable, buildRtmpUrl } = require('./ffmpegRuntime');
 const { StreamOutputManager } = require('./outputManager');
+const { createUpdateService } = require('./updateService');
+const { autoUpdater } = require('electron-updater');
 
 const { Bonjour } = require('bonjour-service');
 const os = require('os');
@@ -18,6 +20,7 @@ const publicInstances = () => [...discovered.values()].map(({ styleToken, ...ins
 let settingsStore = null;
 let encoderProbe = null;
 let outputManager = null;
+let updateService = null;
 let quitAfterOutputStopped = false;
 
 function getEncoderInfo() {
@@ -149,6 +152,20 @@ function createWindow() {
 app.whenReady().then(() => {
   settingsStore = createSettingsStore(app.getPath('userData'), safeStorage);
   outputManager = new StreamOutputManager();
+  updateService = createUpdateService({
+    updater: autoUpdater,
+    app,
+    // Fail closed on unknown/starting/stopping stream states.
+    isStreaming: () => !outputManager || !['idle', 'stopped'].includes(outputManager.state),
+    publish: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:update:status', state);
+    }
+  });
+  ipcMain.handle('stream:update:get', () => updateService.snapshot());
+  ipcMain.handle('stream:update:check', () => updateService.check());
+  ipcMain.handle('stream:update:download', () => updateService.download());
+  ipcMain.handle('stream:update:run', () => updateService.install());
+  ipcMain.handle('stream:update:release', () => require('electron').shell.openExternal('https://github.com/Jacqueb-1337/liturgia-stream/releases/latest'));
   outputManager.on('status', (status) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:output:status', status);
   });
@@ -205,6 +222,13 @@ app.whenReady().then(() => {
   ipcMain.handle('worship:styles:get', (_event, key) => requestWorshipStyles(key, 'GET'));
   ipcMain.handle('worship:styles:save', (_event, key, styles) => requestWorshipStyles(key, 'PUT', styles));
   createWindow();
+  // Check quietly after the first window renders, and every six hours thereafter.
+  mainWindow.webContents.once('did-finish-load', () => {
+    const firstCheck = setTimeout(() => { void updateService.check(); }, 5000);
+    firstCheck.unref?.();
+  });
+  const updateInterval = setInterval(() => { void updateService.check(); }, 6 * 60 * 60 * 1000);
+  updateInterval.unref?.();
   startDiscovery();
 });
 
