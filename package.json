@@ -1,6 +1,6 @@
 {
   "name": "liturgia-stream",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": false,
   "description": "Liturgia Worship streaming companion",
   "main": "main.js",
