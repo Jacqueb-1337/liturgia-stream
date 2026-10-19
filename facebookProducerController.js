@@ -10,6 +10,13 @@ let activeSourceId = null;
 let isConnected = false;
 let lastProducerUrl = HOME;
 const savedPath = () => path.join(app.getPath('userData'),'facebook-producer-url.json');
+const PRODUCER_TTL_MS = 4 * 60 * 60 * 1000;
+function hasValidProducerSession(sourceId) {
+  if (!sourceId) return false;
+  const entry = readUrls()[sourceId];
+  return !!entry && typeof entry === 'object' && isProducerUrl(entry.url) &&
+    Number.isFinite(entry.savedAt) && Date.now() - entry.savedAt >= 0 && Date.now() - entry.savedAt < PRODUCER_TTL_MS;
+}
 function readUrls() {
   try {const value=JSON.parse(fs.readFileSync(savedPath(),'utf8'));return value?.bySource && typeof value.bySource==='object' ? value.bySource : {};}
   catch (_) {return {};}
@@ -22,12 +29,12 @@ function recordUrl(url) {
   if (!isProducerUrl(url) || !/\/\d+\//.test(new URL(url).pathname)) return;
   lastProducerUrl=url;
   if (!activeSourceId) return;
-  try {fs.writeFileSync(savedPath(),JSON.stringify({bySource:{...readUrls(),[activeSourceId]:url}}),{mode:0o600});}catch (_){}
+  try {fs.writeFileSync(savedPath(),JSON.stringify({bySource:{...readUrls(),[activeSourceId]:{url,savedAt:Date.now()}}}),{mode:0o600});}catch (_){}
 }
 function recoverUrl() {
   lastProducerUrl=HOME;
-  const url=activeSourceId && readUrls()[activeSourceId];
-  if(isProducerUrl(url))lastProducerUrl=url;
+  const entry=activeSourceId && readUrls()[activeSourceId];
+  if(hasValidProducerSession(activeSourceId))lastProducerUrl=entry.url;
 }
 function getActiveSourceId(){return activeSourceId;}
 function openFacebookProducer(mainWindow, options = {}) {
@@ -75,4 +82,4 @@ function updateFacebookProducer(status){
   }else if(status.state==='reconnecting'||status.state==='connecting'){isConnected=false;}
   pushState();
 }
-module.exports={openFacebookProducer,updateFacebookProducer,getActiveSourceId,isProducerUrl};
+module.exports={openFacebookProducer,updateFacebookProducer,getActiveSourceId,isProducerUrl,hasValidProducerSession};

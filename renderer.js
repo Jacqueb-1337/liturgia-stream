@@ -1303,13 +1303,38 @@ function destinationState(id) {
   return destinationStates.get(id) || 'offline';
 }
 const facebookConnectionErrors = new Map();
+const facebookSessionValid = new Map();
+async function refreshFacebookSessions() {
+  await Promise.all(destinations.filter(isFacebookDestination).map(async d => {
+    try { const result = await window.liturgiaStream.getFacebookProducerSession(d.id); facebookSessionValid.set(d.id, !!result?.valid); }
+    catch (_) { facebookSessionValid.set(d.id, false); }
+  }));
+  renderDestinationCards();
+}
+const facebookConnectionTimers = new Map();
+function clearFacebookConnectionTimer(id) {
+  const timer = facebookConnectionTimers.get(id);
+  if (timer) clearTimeout(timer);
+  facebookConnectionTimers.delete(id);
+}
+function scheduleFacebookConnectionHelp(id) {
+  clearFacebookConnectionTimer(id);
+  facebookConnectionTimers.set(id, setTimeout(() => {
+    facebookConnectionTimers.delete(id);
+    const item = destinations.find(d => d.id === id);
+    if (!item || !isFacebookDestination(item) || destinationState(id) !== 'connecting') return;
+    facebookConnectionErrors.set(id, 1);
+    destinationErrors.set(id, 'Facebook has not accepted the connection yet. Open Producer and select Streaming software.');
+    renderDestinationCards();
+  }, 10000));
+}
 let facebookPublishRequested = false;
 function isFacebookDestination(item) {
   try { return /(^|\.)facebook\.com$/i.test(new URL(item.server).hostname); }
   catch (_) { return false; }
 }
 function facebookHelpButton(item) {
-  if (!isFacebookDestination(item) || (![1, 2].includes(facebookConnectionErrors.get(item.id)) && !(facebookPublishRequested && destinationState(item.id) === 'live'))) return null;
+  if (!isFacebookDestination(item) || (facebookSessionValid.get(item.id) === true && !facebookPublishRequested && ![1, 2].includes(facebookConnectionErrors.get(item.id)))) return null;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'facebook-connection-help';
@@ -1396,6 +1421,7 @@ destinationEditor.addEventListener('close', () => { editingDestinationId = null;
 async function refreshDestinationList() {
   const config = await window.liturgiaStream.getConfig();
   destinations = Array.isArray(config.destinations) ? config.destinations : [];
+  await refreshFacebookSessions();
   renderDestinationCards();
   return config;
 }
@@ -1667,7 +1693,7 @@ function renderLiveDestinations() {
     list.append(line);
   }
   const facebookPublishButton = document.getElementById('facebook-publish-guide');
-  if (facebookPublishButton) facebookPublishButton.hidden = !destinations.some(d => isFacebookDestination(d) && destinationState(d.id) === 'live');
+  if (facebookPublishButton) facebookPublishButton.hidden = !facebookPublishRequested || !destinations.some(isFacebookDestination);
   const anyActive = destinations.some(d => destinationState(d.id) !== 'offline');
   const allActive = destinations.length > 0 && destinations.every(d => destinationState(d.id) !== 'offline');
   goLiveButton.textContent = allActive ? 'Stop all outputs' :
@@ -1724,13 +1750,17 @@ document.getElementById('apply-scene-live').addEventListener('click', () => {
 
 async function handleOutputStatus(status) {
   if (status.sourceId) {
+    if (status.state === 'stopped') clearFacebookConnectionTimer(status.sourceId);
     if (status.state === 'reconnecting') destinationErrors.set(status.sourceId, String(status.error || 'Connection interrupted.').replace(/rtmps?:\/\/\S+/gi, '[stream destination]').slice(0, 180));
     if (status.state === 'live' || status.state === 'stopped') destinationErrors.delete(status.sourceId);
     const fbDestination = destinations.find(d => d.id === status.sourceId);
     if (fbDestination && isFacebookDestination(fbDestination)) {
-      if (status.state === 'reconnecting' && status.error) {
+      if (status.state === 'connecting') scheduleFacebookConnectionHelp(status.sourceId);
+      if (status.state === 'reconnecting') {
+        clearFacebookConnectionTimer(status.sourceId);
         facebookConnectionErrors.set(status.sourceId, Math.min(2, (facebookConnectionErrors.get(status.sourceId) || 0) + 1));
       } else if (status.state === 'live') {
+        clearFacebookConnectionTimer(status.sourceId);
         facebookConnectionErrors.delete(status.sourceId);
       }
     }
@@ -1942,6 +1972,8 @@ window.addEventListener('beforeunload', () => {
   if (programFrame) programFrame.close();
 });
 requestAnimationFrame(drawPreview);
+window.addEventListener('focus', () => { void refreshFacebookSessions(); });
+setInterval(() => { if (destinations.some(isFacebookDestination)) void refreshFacebookSessions(); }, 60000);
 refreshVideoDevices();
 refreshAudioDevices();
 loadStreamConfig();
@@ -1996,7 +2028,7 @@ function renderUpdateStatus(status) {
   };
   updateUi.message.textContent = messages[phase] || messages.idle;
   updateUi.notes.hidden = !status.releaseNotes || !['available', 'downloading', 'downloaded'].includes(phase);
-  updateUi.notes.textContent = status.releaseNotes || '';
+  updateUi.notes.textContent = (status.releaseNotes || '').replace(/<p[^>]*>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
   updateUi.progress.hidden = !['downloading', 'downloaded'].includes(phase);
   const percent = Math.max(0, Math.min(100, Number(status.percent) || 0));
   updateUi.bar.style.width = `${percent}%`;

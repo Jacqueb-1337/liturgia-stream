@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, session, safeStorage, dialog } = require('e
 const { createSettingsStore } = require('./settingsStore');
 const { executableCandidates, probeFirstAvailable, buildRtmpUrl } = require('./ffmpegRuntime');
 const { MultiOutputManager } = require('./multiOutputManager');
-const { openFacebookProducer, updateFacebookProducer, getActiveSourceId } = require('./facebookProducerController');
+const { openFacebookProducer, updateFacebookProducer, getActiveSourceId, hasValidProducerSession } = require('./facebookProducerController');
 const { createUpdateService } = require('./updateService');
 const { autoUpdater } = require('electron-updater');
 
@@ -243,6 +243,7 @@ app.whenReady().then(() => {
     return settingsStore.deleteDestination(id);
   });
   ipcMain.handle('stream:quality:save', (_event, output) => settingsStore.saveOutput(output));
+  ipcMain.handle('stream:facebook:session', (_event, sourceId) => ({ valid: hasValidProducerSession(sourceId) }));
   ipcMain.handle('stream:facebook:open', (_event, mode = 'connect', sourceId = null) => {
     openFacebookProducer(mainWindow, { mode, sourceId });
     return true;
