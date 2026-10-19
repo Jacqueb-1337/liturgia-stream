@@ -68,7 +68,10 @@
           <div class="card service-card">
             <p class="eyebrow">STREAM STATUS</p>
             <div class="offline-state" id="stream-status"><span class="large-dot"></span><span id="stream-status-label">Not streaming</span></div>
-            <button class="button primary wide" id="go-live">Connect Stream</button>
+            <button class="button primary wide" id="go-live">Connect &amp; Start All</button>
+            <button class="button secondary wide" id="apply-scene-live" hidden>Go Live with Changes</button>
+            <div id="live-target-statuses" class="live-target-statuses"></div>
+            <button id="facebook-producer-help" class="button secondary wide" type="button" hidden>Open Facebook Live Producer</button>
             <p class="helper" id="stream-status-detail">Choose a destination and devices, then go live.</p>
             <p class="stream-elapsed" id="stream-elapsed" hidden>Duration 00:00:00</p>
           </div>
@@ -99,10 +102,12 @@
               <div class="editor-canvas-wrap">
                 <canvas id="scene-editor-preview" width="1920" height="1080" aria-label="Custom scene editor"></canvas>
                 <div id="editor-interaction" aria-label="Move and resize sources">
+                  <div id="editor-snap-grid" hidden aria-hidden="true"></div>
+                  <div id="editor-snap-guides" hidden aria-hidden="true"><i class="guide-x"></i><i class="guide-y"></i></div>
                   <div id="editor-selection" hidden><span class="resize-handle"></span></div>
                 </div>
               </div>
-              <p class="helper">The canvas stays fixed while source controls scroll. Selection outlines are editor-only and never appear in the stream.</p>
+              <p class="helper">Hold Ctrl while dragging to snap to canvas or layer edges and centers. Hold Shift for an aspect-ratio-aligned grid. These guides never appear on the livestream.</p>
             </div>
 
             <div class="editor-panel">
@@ -113,6 +118,7 @@
               <div class="add-layer-row">
                 <select id="add-layer-type">
                   <option value="program">Liturgia Program</option>
+                  <option value="widgets">Worship Widgets</option>
                   <option value="camera">Camera</option>
                   <option value="image">Image</option>
                   <option value="text">Text</option>
@@ -179,21 +185,66 @@
     </section>
 
     <section class="page" id="page-stream">
-      <div class="page-heading"><div><p class="eyebrow">DESTINATION</p><h1>Stream Setup</h1><p class="muted">Save one RTMP or RTMPS destination. Your stream key is protected by Windows secure storage.</p></div></div>
-      <div class="device-card form-card">
-        <label for="destination-name">Destination name</label><input id="destination-name" placeholder="Church YouTube">
-        <label for="stream-server">RTMP or RTMPS server</label><input id="stream-server" placeholder="rtmps://example.com/live" inputmode="url">
-        <label for="stream-key">Stream key</label><input id="stream-key" type="password" autocomplete="new-password" placeholder="Enter your stream key">
+      <div class="page-heading"><div><p class="eyebrow">OUTPUTS</p><h1>Stream Setup</h1><p class="muted">Send one locally encoded stream to multiple platforms. Click a card to connect it, or use its pencil to edit.</p></div></div>
+      <div id="destination-cards" class="destination-grid" aria-label="Streaming destinations"></div>
+      <p id="destination-status" class="helper" role="status">Add a destination to begin.</p>
+      <div class="device-card form-card quality-panel">
+        <h2>Shared stream quality</h2>
+        <p class="helper">All connected destinations share one local H.264/AAC encode. The per-platform publishers remux without encoding a second copy.</p>
         <div class="inline-fields"><div><label for="output-preset">Stream quality</label><select id="output-preset"><option value="1080p30">1080p30</option><option value="720p30">720p30</option><option value="1080p60">1080p60</option></select></div><div><label for="video-bitrate">Video bitrate (Kbps)</label><input id="video-bitrate" type="number" min="1000" max="20000" value="6000"></div></div>
         <div class="inline-fields"><div><label for="audio-bitrate">Audio bitrate (Kbps)</label><input id="audio-bitrate" type="number" min="64" max="320" value="160"></div><div><label>Audio format</label><input value="AAC · 48 kHz" disabled></div></div>
         <div class="encoder-row"><span>Encoder</span><strong>Automatic</strong></div>
         <details class="encoder-details"><summary>Advanced encoder details</summary><p id="encoder-info" class="helper">Checking FFmpeg encoders…</p></details>
-        <button class="button primary" id="save-destination">Save destination</button>
-        <button class="button secondary apply-live-settings" id="apply-live-settings" hidden>Apply saved settings to stream (reconnect)</button>
-        <p id="destination-status" class="helper" role="status">Enter your destination once and it will be ready for next Sunday.</p>
+        <button class="button primary" id="save-quality">Save shared quality</button>
+        <button class="button secondary apply-live-settings" id="apply-live-settings" hidden>Apply quality to active stream (reconnect)</button>
       </div>
     </section>
   </main>
+  <dialog id="offline-program-dialog" class="program-layer-dialog" aria-labelledby="offline-program-title">
+    <header class="program-dialog-head"><h2 id="offline-program-title">Disconnected Worship source</h2><button class="button secondary" id="offline-program-close">×</button></header>
+    <label for="offline-program-mode">When Liturgia Worship disconnects</label>
+    <select id="offline-program-mode">
+      <option value="none">Show nothing (default)</option>
+      <option value="preserve">Preserve the last frame, including after restart</option>
+      <option value="placeholder">Show custom placeholder text</option>
+    </select>
+    <label for="offline-program-text">Placeholder text</label>
+    <textarea id="offline-program-text" rows="3" maxlength="500" placeholder="Worship display is temporarily unavailable"></textarea>
+    <button class="button primary" id="offline-program-save">Save source behavior</button>
+  </dialog>
+  <dialog id="program-display-picker" class="program-layer-dialog" aria-labelledby="program-picker-title">
+    <header class="program-dialog-head"><h2 id="program-picker-title">Choose Liturgia Program display</h2><button type="button" id="program-picker-close" class="button secondary">×</button></header>
+    <p class="helper">These displays are saved on your connected Liturgia Worship computer. Choose one to share its canvas and text styles.</p>
+    <label for="program-picker-list">Existing Worship displays</label>
+    <select id="program-picker-list"></select>
+    <button type="button" id="program-picker-select" class="button primary">Use selected display</button>
+    <div class="program-picker-new">
+      <label for="program-new-name">Or create a new Worship display</label>
+      <input id="program-new-name" maxlength="64" placeholder="Camera lower third">
+      <button type="button" id="program-picker-create" class="button secondary">Create &amp; use display</button>
+    </div>
+    <p id="program-picker-status" class="helper" role="status"></p>
+  </dialog>
+  <dialog id="program-style-dialog" class="program-style-dialog" aria-labelledby="program-style-title">
+    <header class="program-dialog-head"><h2 id="program-style-title">Liturgia Program styles</h2><div class="program-style-actions"><button type="button" id="program-style-change" class="button secondary">Change display…</button><button type="button" id="program-style-close" class="button secondary">×</button></div></header>
+    <p id="program-style-status" class="helper" role="status">Changes are saved on the Worship computer. Stream stays on its previous scene until you go live with changes.</p>
+    <iframe id="program-style-frame" title="Worship network display style editor" src="program-style-window.html"></iframe>
+  </dialog>
+  <dialog id="destination-editor" class="destination-editor" aria-labelledby="destination-editor-title">
+    <div class="destination-edit-head"><h2 id="destination-editor-title">Add destination</h2><button type="button" id="destination-editor-close" class="destination-close" aria-label="Close destination editor">×</button></div>
+    <form id="destination-editor-form" class="destination-edit-fields">
+      <label for="destination-name">Destination name</label><input id="destination-name" maxlength="80" placeholder="Facebook · Sunday service" required>
+      <label for="stream-server">RTMP or RTMPS server</label><input id="stream-server" placeholder="rtmps://example.com/live" inputmode="url" required>
+      <label for="stream-key">Stream key</label><input id="stream-key" type="password" autocomplete="new-password" placeholder="Enter stream key">
+      <p class="helper">Saved keys are encrypted locally and never shown again. Leave blank when editing to keep the existing key.</p>
+      <div class="destination-edit-actions">
+        <button type="button" class="button danger" id="delete-destination-in-editor" hidden>Delete</button>
+        <span class="action-spacer"></span>
+        <button type="button" class="button secondary" id="cancel-destination-edit">Cancel</button>
+        <button type="submit" class="button primary" id="save-destination">Save destination</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="action-confirm" class="action-confirm" aria-labelledby="action-confirm-message">
     <p id="action-confirm-message"></p>
     <form method="dialog" class="action-confirm-buttons">
@@ -203,6 +254,7 @@
   </dialog>
   <div id="layer-context-menu" class="layer-context-menu" role="menu" hidden><button role="menuitem" data-menu-action="edit">Edit source</button><button role="menuitem" data-menu-action="duplicate">Duplicate source</button><button role="menuitem" data-menu-action="fit">Fit canvas</button><button role="menuitem" data-menu-action="remove">Remove source</button></div>
   <div id="program-receivers" aria-hidden="true"></div>
+  <script src="snapLayout.js"></script>
   <script src="sourceStyleEditor.js"></script>
   <script src="renderer.js"></script>
 </body>

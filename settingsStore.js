@@ -14,8 +14,45 @@ const DEFAULT_CONFIG = {
   activeSceneId: 'camera-program'
 };
 
+function standardLayer(id, type, name, transparent = false) {
+  return {
+    id, type, name, x: 0, y: 0, width: 1920, height: 1080,
+    cropLeft: 0, cropTop: 0, cropRight: 0, cropBottom: 0,
+    panX: 0, panY: 0, zoom: 1, opacity: 1, brightness: 100,
+    contrast: 100, saturation: 100, hue: 0, visible: true, locked: false,
+    text: '', fontSize: 72, color: '#ffffff', imagePath: '', transparent, sourceStyles: {}
+  };
+}
+
+function configuredScenes(stored) {
+  const scenes = Array.isArray(stored.scenes) ? stored.scenes : DEFAULT_CONFIG.scenes;
+  if (scenes.some(s => s.id === 'camera-program' && s.custom)) return scenes;
+  const custom = scenes.find(s => s.custom && s.name === 'Custom Scene 1' &&
+    s.layers?.some(layer => layer.type === 'camera') && s.layers?.some(layer => layer.type === 'program'));
+  const cameraProgram = {
+    id: 'camera-program', name: 'Camera + Liturgia', custom: true,
+    cameraVisible: true, programVisible: true,
+    layers: custom ? structuredClone(custom.layers).map((layer, index) => ({
+      ...layer, id: 'builtin-cp-' + index
+    })) : [
+      standardLayer('builtin-cp-camera', 'camera', 'Camera'),
+      standardLayer('builtin-cp-program', 'program', 'Liturgia Program', true)
+    ]
+  };
+  return scenes.map(scene => scene.id === 'camera-program' ? cameraProgram : scene);
+}
+
 function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
   const filePath = path.join(userDataPath, 'settings.json');
+  const savedDestinations = (doc) => Array.isArray(doc.destinations) ? doc.destinations :
+    (doc.destination ? [{ ...doc.destination, id: 'legacy-primary' }] : []);
+  const publicDestination = (entry) => {
+    let keySaved = false;
+    if (typeof entry.encryptedKey === 'string' && safeStorage.isEncryptionAvailable()) {
+      try { safeStorage.decryptString(Buffer.from(entry.encryptedKey, 'base64')); keySaved = true; } catch (_) {}
+    }
+    return { id: entry.id, name: String(entry.name || ''), server: String(entry.server || ''), keySaved };
+  };
 
   async function readRaw() {
     try {
@@ -51,9 +88,10 @@ function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
       }
       return {
         destination,
+        destinations: savedDestinations(stored).map(publicDestination),
         output: { ...DEFAULT_CONFIG.output, ...(stored.output || {}) },
         devices: { cameraId: String(stored.devices?.cameraId || ''), microphoneId: String(stored.devices?.microphoneId || '') },
-        scenes: Array.isArray(stored.scenes) ? stored.scenes : DEFAULT_CONFIG.scenes,
+        scenes: configuredScenes(stored),
         activeSceneId: stored.activeSceneId || DEFAULT_CONFIG.activeSceneId
       };
     },
@@ -89,6 +127,65 @@ function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
       };
       await writeRaw(document);
       return { destination: { name, server, keySaved: true }, output };
+    },
+
+    async saveDestination(item) {
+      const name = String(item?.name || '').trim().slice(0, 80);
+      const server = String(item?.server || '').trim();
+      const freshKey = String(item?.streamKey || '').trim();
+      const id = typeof item?.id === 'string' && /^[a-zA-Z0-9_-]{4,90}$/.test(item.id)
+        ? item.id : require('crypto').randomUUID();
+      if (!name) throw new Error('Enter a destination name.');
+      if (!/^rtmps?:\/\//i.test(server)) throw new Error('Enter a valid RTMP or RTMPS server.');
+      // Parse URLs early to avoid saving malformed destinations.
+      const u = new URL(server);
+      if (!['rtmp:', 'rtmps:'].includes(u.protocol) || !u.hostname || u.username || u.password || u.search || u.hash) {
+        throw new Error('Use a server URL without credentials or query parameters.');
+      }
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure key storage is not available on this device.');
+      const previous = await readRaw();
+      const destinations = savedDestinations(previous);
+      const existing = destinations.find((d) => d.id === id);
+      if (!existing && destinations.length >= 12) throw new Error('At most 12 stream destinations can be saved.');
+      const encryptedKey = freshKey ? safeStorage.encryptString(freshKey).toString('base64') : existing?.encryptedKey;
+      if (!encryptedKey) throw new Error('Enter a stream key.');
+      if (!freshKey) {
+        try { safeStorage.decryptString(Buffer.from(encryptedKey, 'base64')); }
+        catch (_) { throw new Error('The saved stream key is unavailable. Enter a new one.'); }
+      }
+      const updated = { id, name, server, encryptedKey };
+      const next = existing ? destinations.map((d) => d.id === id ? updated : d) : [...destinations, updated];
+      await writeRaw({ ...previous, destinations: next });
+      return publicDestination(updated);
+    },
+
+    async deleteDestination(id) {
+      const previous = await readRaw();
+      const next = savedDestinations(previous).filter((d) => d.id !== id);
+      await writeRaw({ ...previous, destinations: next });
+      return next.map(publicDestination);
+    },
+
+    async saveOutput(output) {
+      const previous = await readRaw();
+      const next = { ...DEFAULT_CONFIG.output, ...(output || {}) };
+      await writeRaw({ ...previous, output: next });
+      return next;
+    },
+
+    async getDestinationCredentialsByIds(ids) {
+      const previous = await readRaw();
+      const destinations = savedDestinations(previous);
+      const selected = Array.isArray(ids) && ids.length ? destinations.filter((d) => ids.includes(d.id)) : destinations;
+      if (!selected.length) throw new Error('Add a destination in Stream Setup first.');
+      if (Array.isArray(ids) && ids.length && selected.length !== new Set(ids).size) throw new Error('A destination was not found.');
+      return selected.map((entry) => {
+        if (!entry.encryptedKey) throw new Error('A destination has no saved stream key.');
+        let streamKey;
+        try { streamKey = safeStorage.decryptString(Buffer.from(entry.encryptedKey, 'base64')); }
+        catch (_) { throw new Error('A saved stream key is unavailable. Edit the destination.'); }
+        return { id: entry.id, name: entry.name, server: entry.server, streamKey };
+      });
     },
 
     async getDestinationCredentials() {
@@ -138,7 +235,7 @@ function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
           ...common,
           custom: true,
           layers: (Array.isArray(scene.layers) ? scene.layers : []).slice(0, 20)
-            .filter((layer) => ['program', 'camera', 'image', 'text'].includes(layer?.type))
+            .filter((layer) => ['program', 'widgets', 'camera', 'image', 'text'].includes(layer?.type))
             .map((layer, layerIndex) => ({
               id: String(layer.id || `layer-${layerIndex + 1}`).slice(0, 64),
               type: layer.type,
@@ -166,6 +263,13 @@ function createSettingsStore(userDataPath, safeStorage, fileSystem = fs) {
               color: /^#[0-9a-f]{6}$/i.test(layer.color) ? layer.color : '#ffffff',
               imagePath: typeof layer.imagePath === 'string' ? layer.imagePath.slice(0, 2048) : '',
               transparent: layer.transparent === true,
+              offlineMode: layer.type === 'program' && ['none','preserve','placeholder'].includes(layer.offlineMode)
+                ? layer.offlineMode : 'none',
+              offlineText: layer.type === 'program' ? String(layer.offlineText || '').slice(0,500) : '',
+              worshipProfileId: layer.type === 'program' && /^[a-z0-9-]{8,80}$/i.test(layer.worshipProfileId || '')
+                ? layer.worshipProfileId : '',
+              worshipProfileRevision: layer.type === 'program'
+                ? bounded(layer.worshipProfileRevision, 0, 0, Number.MAX_SAFE_INTEGER) : 0,
               sourceStyles: Object.fromEntries(
                 Object.entries(layer.sourceStyles || {})
                   .filter(([key, css]) => ['verseText', 'verseNumber', 'verseSubscript', 'verseReference',

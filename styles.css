@@ -281,6 +281,21 @@ body:has(#page-scenes.active) main {
   justify-content: center;
   border-radius: 4px;
 }
+#page-scenes .scene-thumbnail {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 4px;
+  object-fit: contain;
+  background: #090c0e;
+  border: 1px solid #364147;
+  border-radius: 4px;
+}
+#page-scenes .scene-card {
+  height: auto;
+  align-items: stretch;
+}
 #page-scenes .scene-card.active {
   background: #172b3a;
   box-shadow: inset 3px 0 0 var(--accent);
@@ -581,6 +596,90 @@ body:has(#page-scenes.active) main {
     display: none;
   }
 }
+
+
+/* Editor-only modifier guides; never painted to the encoded canvas. */
+#editor-snap-grid{position:absolute;inset:0;pointer-events:none;z-index:2;
+  background-image:linear-gradient(to right,#64c4ff55 1px,transparent 1px),linear-gradient(to bottom,#64c4ff55 1px,transparent 1px);
+  background-size:8.333333% 8.333333%}
+#editor-snap-guides{position:absolute;inset:0;z-index:3;pointer-events:none}
+#editor-snap-guides i{position:absolute;background:#ffcd52bb}
+#editor-snap-guides .guide-x{width:1px;top:0;bottom:0}
+#editor-snap-guides .guide-y{height:1px;left:0;right:0}
+#editor-snap-grid[hidden],#editor-snap-guides[hidden]{display:none!important}
+.offline-program-mode{margin-top:12px}
+/* Worship-native text style editor as a per-Program-layer popover. */
+.program-layer-dialog,.program-style-dialog{
+  padding:0;
+  border:1px solid #566066;
+  border-radius:10px;
+  background:#202426;
+  color:var(--text);
+  box-shadow:0 18px 70px #000b;
+}
+.program-layer-dialog::backdrop,.program-style-dialog::backdrop{background:#000a}
+.program-layer-dialog{width:min(480px,calc(100vw - 32px));padding:16px;max-height:calc(100vh - 32px)}
+.program-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:10px}
+.program-dialog-head h2{font-size:15px;line-height:1.3;margin:0;font-weight:650}
+.program-dialog-head .button{min-width:35px;padding:5px 10px}
+.program-layer-dialog label{display:block;margin:10px 0 5px;font-size:12px}
+.program-layer-dialog input,.program-layer-dialog select{display:block;width:100%;padding:9px;background:#171b1d;color:var(--text);border:1px solid #535c60;border-radius:5px;margin-bottom:10px}
+.program-layer-dialog .button.primary{width:100%}
+.program-picker-new{margin-top:15px;padding-top:12px;border-top:1px solid var(--border)}
+.program-picker-new .button{width:100%}
+.program-style-dialog{
+  display:none;
+  flex-direction:column;
+  width:min(590px,calc(100vw - 24px));
+  height:min(900px,calc(100vh - 26px));
+  max-height:calc(100vh - 26px);
+  overflow:hidden;
+}
+.program-style-dialog[open]{display:flex}
+.program-style-dialog .program-dialog-head{flex:0 0 auto;padding:10px 12px 4px}
+.program-style-actions{display:flex;gap:6px}
+.program-style-dialog>.helper{flex:0 0 auto;margin:3px 12px 8px;font-size:11px}
+#program-style-frame{flex:1;min-height:0;width:100%;border:0;background:#1e1e1e}
+
+/* Compact, independently controllable multi-destination cards. */
+.destination-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:11px;max-width:1120px;margin-bottom:12px}
+.destination-tile,.destination-add{min-height:112px;background:var(--surface);border:1px solid var(--border);border-radius:9px;position:relative;overflow:hidden}
+.destination-tile:hover,.destination-add:hover{border-color:#5e737f}
+.destination-connect{display:flex;flex-direction:column;align-items:flex-start;gap:7px;width:100%;height:100%;min-height:112px;padding:15px 57px 14px 15px;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.destination-connect strong{font-size:14px;max-width:100%;overflow-wrap:anywhere}
+.destination-connect small{font-size:10px;color:var(--muted);max-width:100%;word-break:break-all}
+.destination-state{font-size:11px;color:var(--muted);font-weight:600}
+.destination-state-live{color:var(--green)}
+.destination-state-connecting{color:#84cfff}
+.destination-state-reconnecting{color:#f4c273}
+.destination-tile-actions{position:absolute;top:8px;right:7px;display:flex;gap:4px}
+.destination-tile-actions button{width:24px;height:27px;display:grid;place-items:center;border:1px solid var(--border);border-radius:5px;background:var(--surface-raised);color:var(--text);cursor:pointer}
+.destination-tile-actions button:hover{background:#39454a}
+.destination-tile-actions .destination-tile-trash:hover{background:#623232}
+.destination-add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted);border:1px dashed #596166;cursor:pointer}
+.destination-add span{font-size:37px;line-height:1;font-weight:300;color:#9dcaff}
+.destination-add small{font-size:11px}
+.quality-panel{margin-top:23px;max-width:760px}
+.quality-panel h2{margin:0 0 12px}
+.quality-panel .helper{margin:0 0 15px}
+.destination-editor{width:min(500px,calc(100vw - 30px));max-height:calc(100vh - 50px);padding:20px;border:1px solid #51595d;border-radius:12px;background:var(--surface);color:var(--text);box-shadow:0 22px 70px #000a}
+.destination-editor::backdrop{background:#000a}
+.destination-edit-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.destination-edit-head h2{margin:0}
+.destination-close{font-size:24px;color:var(--muted);border:0;background:transparent;cursor:pointer}
+.destination-edit-fields{display:grid;gap:8px;padding-top:16px}
+.destination-edit-fields label{font-size:12px;font-weight:600}
+.destination-edit-fields input{width:100%;min-width:0;padding:10px;color:var(--text);background:#15191b;border:1px solid var(--border);border-radius:6px}
+.destination-edit-fields .helper{margin:4px 0 12px}
+.destination-edit-actions{display:flex;gap:9px;align-items:center}
+.action-spacer{flex:1}
+.button.danger{background:#4a2626;border-color:#873d3d;color:#ffcece}
+.button.danger:hover{background:#603030}
+.live-target-statuses{display:grid;gap:7px;margin-top:13px}
+.live-target-row{display:flex;align-items:center;justify-content:space-between;gap:9px;font-size:12px;padding:7px;border:1px solid var(--border);border-radius:6px}
+.live-target-row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#facebook-producer-help{margin-top:8px}
+@media(max-width:680px){.destination-grid{grid-template-columns:repeat(auto-fill,minmax(155px,1fr))}.quality-panel{padding:15px}}
 
 @media (max-height: 600px) {
   #page-scenes .page-heading {

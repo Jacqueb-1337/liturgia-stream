@@ -1,0 +1,2008 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self';" />
+  <title>Text Styling</title>
+  <style>
+    :root {
+      --bg: #f2f2f2;
+      --surface: #fff;
+      --border: #ddd;
+      --text: #222;
+      --muted: #666;
+      --label: #444;
+      --section-label: #555;
+      --input-bg: #fff;
+      --input-border: #ccc;
+      --hover: #e8e8e8;
+      --accent: #0078d4;
+      --accent-hover: #005fa3;
+      --separator: #eaeaea;
+    }
+    body.dark {
+      --bg: #1e1e1e;
+      --surface: #252526;
+      --border: #444;
+      --text: #eee;
+      --muted: #aaa;
+      --label: #ccc;
+      --section-label: #aaa;
+      --input-bg: #2a2a2a;
+      --input-border: #555;
+      --hover: #333;
+      --separator: #3a3a3a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 13px; }
+
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 6px; border: 2px solid var(--bg); background-clip: content-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,120,212,0.55); background-clip: content-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
+
+    #safe-area-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #safe-area-box {
+      position: absolute;
+      border: 2px dashed rgba(0,120,212,0.85);
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.28);
+      pointer-events: all;
+    }
+    .sa-handle {
+      position: absolute;
+      width: 8px; height: 8px;
+      background: rgba(0,120,212,0.9);
+      border: 1px solid rgba(255,255,255,0.8);
+      border-radius: 1px;
+      pointer-events: all;
+    }
+    #sa-move-area {
+      position: absolute;
+      inset: 10px;
+      cursor: move;
+    }
+    #sa-overlay-info {
+      position: absolute;
+      bottom: -18px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 9px;
+      color: rgba(0,120,212,0.9);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    #preview-wrap {
+      flex-shrink: 0;
+      background: #000;
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      clip-path: inset(0);
+    }
+    #sw-canvas { display: block; width: 100%; height: auto; }
+    #preview-label {
+      position: absolute;
+      bottom: 6px; left: 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      pointer-events: none;
+    }
+
+    #controls-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 10px 8px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .style-section {
+      padding: 0 0 10px;
+      margin-bottom: 4px;
+    }
+
+    .style-section-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--section-label);
+      background: var(--separator);
+      border-left: 3px solid var(--accent);
+      padding: 4px 7px;
+      margin: 0 -10px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .style-section-title-text {
+      flex: 1;
+    }
+    .section-action-btns {
+      display: flex;
+      gap: 3px;
+      align-items: center;
+      margin-left: 6px;
+      flex-shrink: 0;
+    }
+    /* Sync-from-global button only makes sense in per-display editor */
+    body:not(.per-display) .section-action-btns [data-sync-section] {
+      display: none;
+    }
+    .section-action-btns button {
+      background: none;
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      padding: 0 4px;
+      font-size: 11px;
+      line-height: 16px;
+      cursor: pointer;
+      color: var(--accent);
+      opacity: 0.75;
+      transition: opacity 0.1s;
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 400;
+    }
+    .section-action-btns button:hover { opacity: 1; background: rgba(0,120,212,0.12); }
+    body.dark .style-section-title { background: rgba(255,255,255,0.05); }
+    body.dark .section-action-btns button { border-color: #5b9bd5; color: #5b9bd5; }
+    body.dark .section-action-btns button:hover { background: rgba(91,155,213,0.15); }
+
+    .style-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 3px;
+    }
+
+    .style-field {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .style-field label {
+      font-size: 10px;
+      color: var(--label);
+      white-space: nowrap;
+    }
+
+    input[type="color"] {
+      width: 28px;
+      height: 22px;
+      border: 1px solid var(--input-border);
+      border-radius: 3px;
+      padding: 1px 2px;
+      background: var(--input-bg);
+      cursor: pointer;
+    }
+
+    select {
+      padding: 2px 4px;
+      border: 1px solid var(--input-border);
+      border-radius: 3px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 11px;
+      min-width: 68px;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 64px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--input-border);
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 11px; height: 11px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+    .range-val {
+      font-size: 10px;
+      color: var(--muted);
+      min-width: 22px;
+      text-align: right;
+    }
+
+    .btn-toggle {
+      padding: 1px 7px;
+      border-radius: 3px;
+      border: 1px solid var(--input-border);
+      font-size: 12px;
+      cursor: pointer;
+      background: var(--input-bg);
+      color: var(--text);
+      line-height: 1.6;
+      user-select: none;
+    }
+    .btn-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-toggle:hover:not(.active) { background: var(--hover); }
+
+    .align-group { display: flex; gap: 2px; }
+    .align-group .btn-toggle { padding: 1px 6px; }
+
+    .btn-font {
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid var(--input-border);
+      font-size: 11px;
+      cursor: pointer;
+      background: var(--input-bg);
+      color: var(--text);
+      max-width: 76px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .btn-font:hover { background: var(--hover); }
+
+    .sub-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-top: 5px;
+      margin-bottom: 1px;
+    }
+
+    #footer {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 8px 10px;
+      border-top: 1px solid var(--separator);
+      background: var(--surface);
+    }
+
+    .btn {
+      padding: 4px 14px;
+      border-radius: 4px;
+      border: 1px solid var(--input-border);
+      font-size: 12px;
+      cursor: pointer;
+      background: var(--input-bg);
+      color: var(--text);
+    }
+    .btn:hover { background: var(--hover); }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+    /* Font Picker Popover */
+    #font-picker {
+      position: fixed;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+      z-index: 9999;
+      padding: 8px;
+      display: none;
+      width: 300px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    #font-picker.visible { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 300px; overflow-y: auto; }
+    .font-opt {
+      padding: 5px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: var(--input-bg);
+      color: var(--text);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      overflow: hidden;
+    }
+    .font-opt-name {
+      font-family: system-ui, sans-serif;
+      font-size: 9px;
+      line-height: 1.2;
+      color: var(--text-muted, #888);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
+      text-align: center;
+    }
+    .font-opt-preview {
+      font-size: 13px;
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
+      text-align: center;
+    }
+    .font-opt:hover { background: var(--hover); border-color: var(--input-border); }
+    .font-opt.active { border-color: var(--accent); background: rgba(0,120,212,0.1); }
+
+    /* Tabs */
+    .sw-tab-bar {
+      display: flex;
+      border-bottom: 1px solid var(--separator);
+      margin: 4px -10px 0;
+      padding: 0 10px;
+    }
+    .sw-tab {
+      padding: 5px 12px;
+      font-size: 12px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      margin-bottom: -1px;
+    }
+    .sw-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .sw-tab:hover:not(.active) { color: var(--text); }
+    .sw-tab-panel { display: none; }
+    .sw-tab-panel.active { display: block; }
+  </style>
+</head>
+<body>
+
+  <div id="preview-wrap">
+    <canvas id="sw-canvas"></canvas>
+    <span id="preview-label">Preview</span>
+    <div id="safe-area-overlay">
+      <div id="safe-area-box">
+        <div class="sa-handle" data-sa-dir="nw" style="top:-5px;left:-5px;cursor:nw-resize;"></div>
+        <div class="sa-handle" data-sa-dir="ne" style="top:-5px;right:-5px;cursor:ne-resize;"></div>
+        <div class="sa-handle" data-sa-dir="sw" style="bottom:-5px;left:-5px;cursor:sw-resize;"></div>
+        <div class="sa-handle" data-sa-dir="se" style="bottom:-5px;right:-5px;cursor:se-resize;"></div>
+        <div data-sa-dir="n" style="position:absolute;top:-4px;left:8px;right:8px;height:8px;cursor:n-resize;pointer-events:all;"></div>
+        <div data-sa-dir="s" style="position:absolute;bottom:-4px;left:8px;right:8px;height:8px;cursor:s-resize;pointer-events:all;"></div>
+        <div data-sa-dir="w" style="position:absolute;left:-4px;top:8px;bottom:8px;width:8px;cursor:w-resize;pointer-events:all;"></div>
+        <div data-sa-dir="e" style="position:absolute;right:-4px;top:8px;bottom:8px;width:8px;cursor:e-resize;pointer-events:all;"></div>
+        <div id="sa-move-area" data-sa-dir="move"></div>
+        <span id="sa-overlay-info"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls-wrap">
+
+    <!-- Canvas & Layout -->
+    <div class="style-section">
+      <div class="style-section-title"><span class="style-section-title-text">Canvas &amp; Layout</span><span class="section-action-btns"><button data-sync-section="global" title="Sync from global styles">&#x21BB;</button><button data-reset-section="global" title="Reset to defaults">&#x21BA;</button></span></div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Overlay</label>
+          <input type="range" id="ts-global-overlay" min="0" max="100" step="1" value="40">
+          <span class="range-val" id="ts-global-overlay-val">40%</span>
+        </div>
+        <div class="style-field">
+          <label>BG Blur</label>
+          <input type="range" id="ts-global-blur" min="0" max="20" step="1" value="0">
+          <span class="range-val" id="ts-global-blur-val">0px</span>
+        </div>
+      </div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Position</label>
+          <div class="align-group">
+            <button class="btn-toggle" id="ts-global-vpos-top" data-val="top">Top</button>
+            <button class="btn-toggle active" id="ts-global-vpos-center" data-val="center">Ctr</button>
+            <button class="btn-toggle" id="ts-global-vpos-bottom" data-val="bottom">Bot</button>
+          </div>
+        </div>
+        <div class="style-field">
+          <label>Line Ht</label>
+          <select id="ts-global-lineheight">
+            <option value="1.0">1.0</option>
+            <option value="1.1">1.1</option>
+            <option value="1.2" selected>1.2</option>
+            <option value="1.3">1.3</option>
+            <option value="1.4">1.4</option>
+            <option value="1.5">1.5</option>
+            <option value="1.7">1.7</option>
+            <option value="2.0">2.0</option>
+          </select>
+        </div>
+      </div>
+      <div class="style-row" style="margin-top:5px;">
+        <div class="style-field">
+          <label>Safe Area</label>
+          <button class="btn" id="btn-reset-safe-area" style="padding:1px 6px;font-size:11px;">Reset</button>
+        </div>
+        <span class="range-val" id="sa-info-row" style="flex:1;text-align:right;">Drag handles on preview</span>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="sw-tab-bar">
+      <button class="sw-tab active" data-tab="verses">Verses</button>
+      <button class="sw-tab" data-tab="songs">Songs</button>
+    </div>
+
+    <div id="tab-verses" class="sw-tab-panel active">
+
+    <!-- Main Text -->
+    <div class="style-section">
+      <div class="style-section-title"><span class="style-section-title-text">Main Text</span><span class="section-action-btns"><button data-sync-section="verseText" title="Sync from global styles">&#x21BB;</button><button data-reset-section="verseText" title="Reset to defaults">&#x21BA;</button></span></div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-text-color" value="#ffffff">
+        </div>
+        <div class="style-field">
+          <label>Font</label>
+          <button class="btn-font" id="ts-text-font-btn">Arial</button>
+          <input type="hidden" id="ts-text-font" value="Arial">
+        </div>
+        <button class="btn-toggle" id="ts-text-bold" title="Bold"><b>B</b></button>
+        <button class="btn-toggle" id="ts-text-italic" title="Italic"><em>I</em></button>
+      </div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Align</label>
+          <div class="align-group">
+            <button class="btn-toggle" id="ts-text-align-left" data-val="left">L</button>
+            <button class="btn-toggle active" id="ts-text-align-center" data-val="center">C</button>
+            <button class="btn-toggle" id="ts-text-align-right" data-val="right">R</button>
+          </div>
+        </div>
+        <div class="style-field">
+          <label>Spc</label>
+          <select id="ts-text-letterspacing">
+            <option value="0">Default</option>
+            <option value="1">+1px</option>
+            <option value="2">+2px</option>
+            <option value="3">+3px</option>
+            <option value="5">+5px</option>
+            <option value="8">+8px</option>
+          </select>
+        </div>
+      </div>
+      <div class="sub-label">Shadow</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-text-shadow-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Blur</label>
+          <input type="range" id="ts-text-shadow-blur" min="0" max="30" step="1" value="0">
+          <span class="range-val" id="ts-text-shadow-blur-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>X</label>
+          <input type="range" id="ts-text-shadow-x" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-text-shadow-x-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>Y</label>
+          <input type="range" id="ts-text-shadow-y" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-text-shadow-y-val">0</span>
+        </div>
+      </div>
+      <div class="sub-label">Outline</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-text-stroke-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Width</label>
+          <select id="ts-text-stroke-width">
+            <option value="0">None</option>
+            <option value="1">1px</option>
+            <option value="2">2px</option>
+            <option value="3">3px</option>
+            <option value="4">4px</option>
+            <option value="6">6px</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Verse Number -->
+    <div class="style-section">
+      <div class="style-section-title"><span class="style-section-title-text">Verse Number (top-left)</span><span class="section-action-btns"><button data-sync-section="verseNumber" title="Sync from global styles">&#x21BB;</button><button data-reset-section="verseNumber" title="Reset to defaults">&#x21BA;</button></span></div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-number-color" value="#ffffff">
+        </div>
+        <div class="style-field">
+          <label>Size</label>
+          <select id="ts-number-size">
+            <option value="">Default</option>
+            <option value="0.4em">Small</option>
+            <option value="0.55em">Medium</option>
+            <option value="0.7em">Large</option>
+            <option value="0.85em">X-Large</option>
+          </select>
+        </div>
+        <div class="style-field">
+          <label>Font</label>
+          <button class="btn-font" id="ts-number-font-btn">Arial</button>
+          <input type="hidden" id="ts-number-font" value="Arial">
+        </div>
+        <button class="btn-toggle" id="ts-number-bold" title="Bold"><b>B</b></button>
+      </div>
+      <div class="sub-label">Shadow</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-number-shadow-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Blur</label>
+          <input type="range" id="ts-number-shadow-blur" min="0" max="30" step="1" value="0">
+          <span class="range-val" id="ts-number-shadow-blur-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>X</label>
+          <input type="range" id="ts-number-shadow-x" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-number-shadow-x-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>Y</label>
+          <input type="range" id="ts-number-shadow-y" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-number-shadow-y-val">0</span>
+        </div>
+      </div>
+      <div class="sub-label">Outline</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-number-stroke-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Width</label>
+          <select id="ts-number-stroke-width">
+            <option value="0">None</option>
+            <option value="1">1px</option>
+            <option value="2">2px</option>
+            <option value="3">3px</option>
+            <option value="4">4px</option>
+            <option value="6">6px</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inline Verse Numbers -->
+    <div class="style-section">
+      <div class="style-section-title"><span class="style-section-title-text">Inline Verse Numbers</span><span class="section-action-btns"><button data-sync-section="verseSubscript" title="Sync from global styles">&#x21BB;</button><button data-reset-section="verseSubscript" title="Reset to defaults">&#x21BA;</button></span></div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-subscript-color" value="#dddddd">
+        </div>
+        <div class="style-field">
+          <label>Size</label>
+          <select id="ts-subscript-size">
+            <option value="">Default</option>
+            <option value="0.4em">Small</option>
+            <option value="0.55em">Medium</option>
+            <option value="0.7em">Large</option>
+            <option value="0.85em">X-Large</option>
+          </select>
+        </div>
+        <div class="style-field">
+          <label>Font</label>
+          <button class="btn-font" id="ts-subscript-font-btn">Arial</button>
+          <input type="hidden" id="ts-subscript-font" value="Arial">
+        </div>
+      </div>
+      <div class="sub-label">Shadow</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-subscript-shadow-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Blur</label>
+          <input type="range" id="ts-subscript-shadow-blur" min="0" max="30" step="1" value="0">
+          <span class="range-val" id="ts-subscript-shadow-blur-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>X</label>
+          <input type="range" id="ts-subscript-shadow-x" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-subscript-shadow-x-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>Y</label>
+          <input type="range" id="ts-subscript-shadow-y" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-subscript-shadow-y-val">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reference -->
+    <div class="style-section">
+      <div class="style-section-title"><span class="style-section-title-text">Verse Reference (bottom-right)</span><span class="section-action-btns"><button data-sync-section="verseReference" title="Sync from global styles">&#x21BB;</button><button data-reset-section="verseReference" title="Reset to defaults">&#x21BA;</button></span></div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-reference-color" value="#ffffff">
+        </div>
+        <div class="style-field">
+          <label>Size</label>
+          <select id="ts-reference-size">
+            <option value="">Default</option>
+            <option value="0.45em">Small</option>
+            <option value="0.6em">Medium</option>
+            <option value="0.75em">Large</option>
+            <option value="0.9em">X-Large</option>
+          </select>
+        </div>
+        <div class="style-field">
+          <label>Font</label>
+          <button class="btn-font" id="ts-reference-font-btn">Arial</button>
+          <input type="hidden" id="ts-reference-font" value="Arial">
+        </div>
+        <button class="btn-toggle" id="ts-reference-bold" title="Bold"><b>B</b></button>
+        <button class="btn-toggle" id="ts-reference-italic" title="Italic"><em>I</em></button>
+      </div>
+      <div class="sub-label">Shadow</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-reference-shadow-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Blur</label>
+          <input type="range" id="ts-reference-shadow-blur" min="0" max="30" step="1" value="0">
+          <span class="range-val" id="ts-reference-shadow-blur-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>X</label>
+          <input type="range" id="ts-reference-shadow-x" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-reference-shadow-x-val">0</span>
+        </div>
+        <div class="style-field">
+          <label>Y</label>
+          <input type="range" id="ts-reference-shadow-y" min="-20" max="20" step="1" value="0">
+          <span class="range-val" id="ts-reference-shadow-y-val">0</span>
+        </div>
+      </div>
+      <div class="sub-label">Outline</div>
+      <div class="style-row">
+        <div class="style-field">
+          <label>Color</label>
+          <input type="color" id="ts-reference-stroke-color" value="#000000">
+        </div>
+        <div class="style-field">
+          <label>Width</label>
+          <select id="ts-reference-stroke-width">
+            <option value="0">None</option>
+            <option value="1">1px</option>
+            <option value="2">2px</option>
+            <option value="3">3px</option>
+            <option value="4">4px</option>
+            <option value="6">6px</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- /tab-verses -->
+
+    <div id="tab-songs" class="sw-tab-panel">
+
+      <!-- Song Text (Lyrics) -->
+      <div class="style-section">
+        <div class="style-section-title"><span class="style-section-title-text">Song Text (Lyrics)</span><span class="section-action-btns"><button data-sync-section="songText" title="Sync from global styles">&#x21BB;</button><button data-reset-section="songText" title="Reset to defaults">&#x21BA;</button></span></div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-text-color" value="#ffffff">
+          </div>
+          <div class="style-field">
+            <label>Font</label>
+            <button class="btn-font" id="sg-text-font-btn">Arial</button>
+            <input type="hidden" id="sg-text-font" value="Arial">
+          </div>
+          <button class="btn-toggle" id="sg-text-bold" title="Bold"><b>B</b></button>
+          <button class="btn-toggle" id="sg-text-italic" title="Italic"><em>I</em></button>
+        </div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Align</label>
+            <div class="align-group">
+              <button class="btn-toggle" id="sg-text-align-left" data-val="left">L</button>
+              <button class="btn-toggle active" id="sg-text-align-center" data-val="center">C</button>
+              <button class="btn-toggle" id="sg-text-align-right" data-val="right">R</button>
+            </div>
+          </div>
+          <div class="style-field">
+            <label>Spc</label>
+            <select id="sg-text-letterspacing">
+              <option value="0">Default</option>
+              <option value="1">+1px</option>
+              <option value="2">+2px</option>
+              <option value="3">+3px</option>
+              <option value="5">+5px</option>
+              <option value="8">+8px</option>
+            </select>
+          </div>
+        </div>
+        <div class="style-row" style="margin-top:3px;">
+          <div class="style-field">
+            <label>Layout</label>
+            <button class="btn-toggle" id="sg-inline-lyrics" title="Replace line breaks with spaces so all lyrics flow as one block">Inline</button>
+          </div>
+        </div>
+        <div class="sub-label">Shadow</div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-text-shadow-color" value="#000000">
+          </div>
+          <div class="style-field">
+            <label>Blur</label>
+            <input type="range" id="sg-text-shadow-blur" min="0" max="30" step="1" value="0">
+            <span class="range-val" id="sg-text-shadow-blur-val">0</span>
+          </div>
+          <div class="style-field">
+            <label>X</label>
+            <input type="range" id="sg-text-shadow-x" min="-20" max="20" step="1" value="0">
+            <span class="range-val" id="sg-text-shadow-x-val">0</span>
+          </div>
+          <div class="style-field">
+            <label>Y</label>
+            <input type="range" id="sg-text-shadow-y" min="-20" max="20" step="1" value="0">
+            <span class="range-val" id="sg-text-shadow-y-val">0</span>
+          </div>
+        </div>
+        <div class="sub-label">Outline</div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-text-stroke-color" value="#000000">
+          </div>
+          <div class="style-field">
+            <label>Width</label>
+            <select id="sg-text-stroke-width">
+              <option value="0">None</option>
+              <option value="1">1px</option>
+              <option value="2">2px</option>
+              <option value="3">3px</option>
+              <option value="4">4px</option>
+              <option value="6">6px</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Song Reference (Title + Section at bottom) -->
+      <div class="style-section">
+        <div class="style-section-title"><span class="style-section-title-text">Song Reference (bottom-right)</span><span class="section-action-btns"><button data-sync-section="songReference" title="Sync from global styles">&#x21BB;</button><button data-reset-section="songReference" title="Reset to defaults">&#x21BA;</button></span></div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-reference-color" value="#ffffff">
+          </div>
+          <div class="style-field">
+            <label>Size</label>
+            <select id="sg-reference-size">
+              <option value="">Default</option>
+              <option value="0.45em">Small</option>
+              <option value="0.6em">Medium</option>
+              <option value="0.75em">Large</option>
+              <option value="0.9em">X-Large</option>
+            </select>
+          </div>
+          <div class="style-field">
+            <label>Font</label>
+            <button class="btn-font" id="sg-reference-font-btn">Arial</button>
+            <input type="hidden" id="sg-reference-font" value="Arial">
+          </div>
+          <button class="btn-toggle" id="sg-reference-bold" title="Bold"><b>B</b></button>
+          <button class="btn-toggle" id="sg-reference-italic" title="Italic"><em>I</em></button>
+        </div>
+        <div class="sub-label">Shadow</div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-reference-shadow-color" value="#000000">
+          </div>
+          <div class="style-field">
+            <label>Blur</label>
+            <input type="range" id="sg-reference-shadow-blur" min="0" max="30" step="1" value="0">
+            <span class="range-val" id="sg-reference-shadow-blur-val">0</span>
+          </div>
+          <div class="style-field">
+            <label>X</label>
+            <input type="range" id="sg-reference-shadow-x" min="-20" max="20" step="1" value="0">
+            <span class="range-val" id="sg-reference-shadow-x-val">0</span>
+          </div>
+          <div class="style-field">
+            <label>Y</label>
+            <input type="range" id="sg-reference-shadow-y" min="-20" max="20" step="1" value="0">
+            <span class="range-val" id="sg-reference-shadow-y-val">0</span>
+          </div>
+        </div>
+        <div class="sub-label">Outline</div>
+        <div class="style-row">
+          <div class="style-field">
+            <label>Color</label>
+            <input type="color" id="sg-reference-stroke-color" value="#000000">
+          </div>
+          <div class="style-field">
+            <label>Width</label>
+            <select id="sg-reference-stroke-width">
+              <option value="0">None</option>
+              <option value="1">1px</option>
+              <option value="2">2px</option>
+              <option value="3">3px</option>
+              <option value="4">4px</option>
+              <option value="6">6px</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-songs -->
+
+  </div>
+
+  <div id="footer">
+    <button class="btn" id="btn-reset">Reset All</button>
+    <button class="btn" id="btn-cancel">Cancel</button>
+    <button class="btn btn-primary" id="btn-save">Save</button>
+  </div>
+
+  <!-- Font Picker Popover -->
+  <div id="font-picker"></div>
+
+<script>
+'use strict';
+// Embed the original Worship editor in a sandboxed Stream popover.
+const ipcRenderer = {
+  on(channel, callback) {
+    if (channel !== 'style-window-init') return;
+    window.addEventListener('message', event => {
+      if (event.source === window.parent && event.data?.type === 'liturgia-program-style-init') {
+        callback(null, event.data.payload);
+      }
+    });
+  }
+};
+function closeStreamStylePopover() {
+  window.parent.postMessage({ type: 'liturgia-program-style-close' }, '*');
+}
+
+// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const FONTS = [
+  'Arial', 'Arial Black', 'Book Antiqua', 'Bookman Old Style',
+  'Calibri', 'Cambria', 'Candara', 'Century Gothic',
+  'Comic Sans MS', 'Consolas', 'Constantia', 'Corbel',
+  'Courier New', 'Franklin Gothic Medium', 'Garamond', 'Georgia',
+  'Gil Sans MT', 'Impact', 'Leelawadee UI', 'Lucida Console',
+  'Lucida Sans Unicode', 'Microsoft Sans Serif', 'Palatino Linotype',
+  'Segoe UI', 'Segoe UI Light', 'Tahoma', 'Times New Roman',
+  'Trebuchet MS', 'Verdana',
+];
+
+// â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+let initContent = null;
+let localStyles  = {};
+let bgSnapshot   = null;
+let _activeFontTarget = null; // id of hidden font input currently being picked
+let _isPerDisplay = false;
+let _displayId    = null;
+let _activeTab    = 'verses';
+let _safeArea     = { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+let _globalStyles = {};
+
+// â”€â”€ Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function pathToFileURL(p) {
+  if (!p) return '';
+  return 'file:///' + p.replace(/\\/g, '/');
+}
+
+function applyColorToCanvas(ctx, colorCSS, W, H) {
+  if (colorCSS.startsWith('linear-gradient')) {
+    const m = colorCSS.match(/linear-gradient\((\d+)deg,\s*([^,]+),\s*(.+)\)/);
+    if (m) {
+      const rad = (parseInt(m[1]) - 90) * Math.PI / 180;
+      const g = ctx.createLinearGradient(W/2+Math.cos(rad)*W/2, H/2+Math.sin(rad)*H/2, W/2-Math.cos(rad)*W/2, H/2-Math.sin(rad)*H/2);
+      g.addColorStop(0, m[2].trim()); g.addColorStop(1, m[3].trim());
+      ctx.fillStyle = g;
+    } else ctx.fillStyle = '#000';
+  } else if (colorCSS.startsWith('radial-gradient')) {
+    const m = colorCSS.match(/radial-gradient\(circle,\s*([^,]+),\s*(.+)\)/);
+    if (m) {
+      const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)/2);
+      g.addColorStop(0, m[1].trim()); g.addColorStop(1, m[2].trim());
+      ctx.fillStyle = g;
+    } else ctx.fillStyle = '#000';
+  } else ctx.fillStyle = colorCSS;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawImageCover(ctx, img, W, H) {
+  const scale = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+  const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+  ctx.drawImage(img, (W-w)/2, (H-h)/2, w, h);
+}
+
+// â”€â”€ Style serialisation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function toB64Style(o) {
+  let css = '';
+  if (o.color)       css += `color: ${o.color}; `;
+  if (o.sizeEm)      css += `font-size: ${o.sizeEm}; `;
+  if (o.fontFamily && o.fontFamily !== 'Arial') css += `font-family: ${o.fontFamily}; `;
+  if (o.bold)        css += `font-weight: bold; `;
+  if (o.italic)      css += `font-style: italic; `;
+  const ls = parseInt(o.letterSpacing || 0);
+  if (ls > 0)        css += `letter-spacing: ${ls}; `;
+  if (o.textAlign && o.textAlign !== 'center') css += `text-align: ${o.textAlign}; `;
+  const sb = parseInt(o.shadowBlur || 0), sx = parseInt(o.shadowX || 0), sy = parseInt(o.shadowY || 0);
+  if (sb > 0 || sx !== 0 || sy !== 0)
+    css += `shadow-color: ${o.shadowColor||'#000000'}; shadow-blur: ${sb}; shadow-x: ${sx}; shadow-y: ${sy}; `;
+  const sw = parseInt(o.strokeWidth || 0);
+  if (sw > 0) css += `stroke-color: ${o.strokeColor||'#000000'}; stroke-width: ${sw}; `;
+  return css.trim() ? btoa(unescape(encodeURIComponent(css.trim()))) : '';
+}
+
+function toB64Global(o) {
+  const sa = o.safeArea || {};
+  let css = `overlay-opacity: ${o.overlayOpacity}; bg-blur: ${o.bgBlur}; line-height: ${o.lineHeight}; vertical-position: ${o.verticalPosition};`;
+  css += ` safe-area-x: ${(sa.x !== undefined ? sa.x : 0.04).toFixed(4)};`;
+  css += ` safe-area-y: ${(sa.y !== undefined ? sa.y : 0.04).toFixed(4)};`;
+  css += ` safe-area-w: ${(sa.w !== undefined ? sa.w : 0.92).toFixed(4)};`;
+  css += ` safe-area-h: ${(sa.h !== undefined ? sa.h : 0.92).toFixed(4)};`;
+  if (o.songInline) css += ` song-inline: 1;`;
+  return btoa(unescape(encodeURIComponent(css)));
+}
+
+function styleFromB64(b64) {
+  if (!b64) return {};
+  try {
+    const css = decodeURIComponent(escape(atob(b64)));
+    const get = (re) => { const m = css.match(re); return m ? m[1].trim() : null; };
+    const getN = (re, d=0) => { const m = css.match(re); return m ? parseFloat(m[1]) : d; };
+    return {
+      color:          get(/\bcolor\s*:\s*([^;]+)/i),
+      sizeMultiplier: (() => { const m = css.match(/font-size\s*:\s*([\d.]+)em/i); return m ? parseFloat(m[1]) : null; })(),
+      fontFamily:     get(/font-family\s*:\s*([^;]+)/i) || 'Arial',
+      fontWeight:     get(/font-weight\s*:\s*(bold)/i) ? 'bold' : null,
+      fontStyle:      get(/font-style\s*:\s*(italic)/i) ? 'italic' : null,
+      letterSpacing:  getN(/letter-spacing\s*:\s*([\d.]+)/i),
+      textAlign:      get(/text-align\s*:\s*([^;]+)/i) || 'center',
+      shadowColor:    get(/shadow-color\s*:\s*([^;]+)/i) || '#000000',
+      shadowBlur:     getN(/shadow-blur\s*:\s*([\d.]+)/i),
+      shadowX:        getN(/shadow-x\s*:\s*(-?[\d.]+)/i),
+      shadowY:        getN(/shadow-y\s*:\s*(-?[\d.]+)/i),
+      strokeColor:    get(/stroke-color\s*:\s*([^;]+)/i) || '#000000',
+      strokeWidth:    getN(/stroke-width\s*:\s*([\d.]+)/i),
+    };
+  } catch { return {}; }
+}
+
+function globalFromB64(b64) {
+  const def = { overlayOpacity: 0.4, bgBlur: 0, lineHeight: 1.2, verticalPosition: 'center', safeArea: { x: 0.04, y: 0.04, w: 0.92, h: 0.92 }, songInline: false };
+  if (!b64) return def;
+  try {
+    const css = decodeURIComponent(escape(atob(b64)));
+    const getN = (re, d) => { const m = css.match(re); return m ? parseFloat(m[1]) : d; };
+    const getS = (re, d) => { const m = css.match(re); return m ? m[1].trim() : d; };
+    return {
+      overlayOpacity:   getN(/overlay-opacity\s*:\s*([\d.]+)/i, 0.4),
+      bgBlur:           getN(/bg-blur\s*:\s*([\d.]+)/i, 0),
+      lineHeight:       getN(/line-height\s*:\s*([\d.]+)/i, 1.2),
+      verticalPosition: getS(/vertical-position\s*:\s*([^;]+)/i, 'center'),
+      safeArea: {
+        x: getN(/safe-area-x\s*:\s*([\d.]+)/i, 0.04),
+        y: getN(/safe-area-y\s*:\s*([\d.]+)/i, 0.04),
+        w: getN(/safe-area-w\s*:\s*([\d.]+)/i, 0.92),
+        h: getN(/safe-area-h\s*:\s*([\d.]+)/i, 0.92),
+      },
+      songInline: /song-inline\s*:\s*1/.test(css),
+    };
+  } catch { return def; }
+}
+
+// â”€â”€ helpers to read color/em from b64 (for populateControls) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function getColorHex(b64) {
+  const s = styleFromB64(b64);
+  if (!s.color) return null;
+  const raw = s.color;
+  if (raw.startsWith('#') && (raw.length === 4 || raw.length === 7)) return raw;
+  const el = document.createElement('div');
+  el.style.color = raw;
+  document.body.appendChild(el);
+  const computed = getComputedStyle(el).color;
+  document.body.removeChild(el);
+  const rgb = computed.match(/\d+/g);
+  return rgb ? '#' + rgb.map(v => parseInt(v).toString(16).padStart(2,'0')).join('') : null;
+}
+
+function getSizeEm(b64) {
+  const s = styleFromB64(b64);
+  return s.sizeMultiplier ? s.sizeMultiplier + 'em' : '';
+}
+
+// â”€â”€ Toggle helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function setToggle(id, active) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('active', !!active);
+}
+
+function getActiveToggle(ids, def) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el && el.classList.contains('active')) return el.dataset.val || el.textContent.trim().toLowerCase();
+  }
+  return def;
+}
+
+function setActiveToggleGroup(ids, value) {
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const val = el.dataset.val || el.textContent.trim().toLowerCase();
+    el.classList.toggle('active', val === value);
+  });
+}
+
+function wireToggleGroup(ids) {
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      ids.forEach(oid => document.getElementById(oid)?.classList.remove('active'));
+      el.classList.add('active');
+      onControlChange();
+    });
+  });
+}
+
+function wireToggle(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => { el.classList.toggle('active'); onControlChange(); });
+}
+
+// â”€â”€ Range display helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function wireRange(rangeId, valId, suffix) {
+  const r = document.getElementById(rangeId);
+  const v = document.getElementById(valId);
+  if (!r || !v) return;
+  const update = () => { v.textContent = r.value + suffix; onControlChange(); };
+  r.addEventListener('input', update);
+}
+
+function setRange(id, valId, val, suffix) {
+  const r = document.getElementById(id);
+  const v = document.getElementById(valId);
+  if (r) r.value = val;
+  if (v) v.textContent = val + suffix;
+}
+
+// â”€â”€ Font Picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function buildFontPicker() {
+  const picker = document.getElementById('font-picker');
+  picker.innerHTML = '';
+  FONTS.forEach(font => {
+    const opt = document.createElement('div');
+    opt.className = 'font-opt';
+    opt.title = font;
+    opt.dataset.font = font;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'font-opt-name';
+    nameEl.textContent = font;
+    const previewEl = document.createElement('span');
+    previewEl.className = 'font-opt-preview';
+    previewEl.textContent = 'AaBbCc.,;:-';
+    previewEl.style.fontFamily = font;
+    opt.appendChild(nameEl);
+    opt.appendChild(previewEl);
+    opt.addEventListener('click', () => {
+      if (_activeFontTarget) {
+        document.getElementById(_activeFontTarget).value = font;
+        // Update the button label
+        const btnId = _activeFontTarget.replace('-font', '-font-btn');
+        const btn = document.getElementById(btnId);
+        if (btn) { btn.textContent = font; btn.style.fontFamily = font; }
+        // Mark active
+        picker.querySelectorAll('.font-opt').forEach(o => o.classList.remove('active'));
+        opt.classList.add('active');
+      }
+      closeFontPicker();
+      onControlChange();
+    });
+    picker.appendChild(opt);
+  });
+}
+
+function openFontPicker(targetInputId, btnEl) {
+  _activeFontTarget = targetInputId;
+  const picker = document.getElementById('font-picker');
+  buildFontPicker();
+
+  // Mark currently selected font
+  const currentFont = document.getElementById(targetInputId)?.value || 'Arial';
+  picker.querySelectorAll('.font-opt').forEach(o => {
+    o.classList.toggle('active', o.dataset.font === currentFont);
+  });
+
+  picker.classList.add('visible');
+
+  // Position near the button
+  const rect = btnEl.getBoundingClientRect();
+  const pw = 300, ph = 300;
+  let left = rect.left, top = rect.bottom + 4;
+  if (left + pw > window.innerWidth)  left = window.innerWidth - pw - 8;
+  if (top + ph > window.innerHeight)  top = rect.top - ph - 4;
+  picker.style.left = left + 'px';
+  picker.style.top  = top  + 'px';
+}
+
+function closeFontPicker() {
+  document.getElementById('font-picker').classList.remove('visible');
+  _activeFontTarget = null;
+}
+
+// â”€â”€ Read controls â†’ localStyles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function readControlsToLocalStyles() {
+  localStyles.verseText = toB64Style({
+    color:          document.getElementById('ts-text-color').value,
+    fontFamily:     document.getElementById('ts-text-font').value,
+    bold:           document.getElementById('ts-text-bold').classList.contains('active'),
+    italic:         document.getElementById('ts-text-italic').classList.contains('active'),
+    letterSpacing:  document.getElementById('ts-text-letterspacing').value,
+    textAlign:      getActiveToggle(['ts-text-align-left','ts-text-align-center','ts-text-align-right'], 'center'),
+    shadowColor:    document.getElementById('ts-text-shadow-color').value,
+    shadowBlur:     document.getElementById('ts-text-shadow-blur').value,
+    shadowX:        document.getElementById('ts-text-shadow-x').value,
+    shadowY:        document.getElementById('ts-text-shadow-y').value,
+    strokeColor:    document.getElementById('ts-text-stroke-color').value,
+    strokeWidth:    document.getElementById('ts-text-stroke-width').value,
+  });
+  localStyles.verseNumber = toB64Style({
+    color:       document.getElementById('ts-number-color').value,
+    sizeEm:      document.getElementById('ts-number-size').value,
+    fontFamily:  document.getElementById('ts-number-font').value,
+    bold:        document.getElementById('ts-number-bold').classList.contains('active'),
+    shadowColor: document.getElementById('ts-number-shadow-color').value,
+    shadowBlur:  document.getElementById('ts-number-shadow-blur').value,
+    shadowX:     document.getElementById('ts-number-shadow-x').value,
+    shadowY:     document.getElementById('ts-number-shadow-y').value,
+    strokeColor: document.getElementById('ts-number-stroke-color').value,
+    strokeWidth: document.getElementById('ts-number-stroke-width').value,
+  });
+  localStyles.verseSubscript = toB64Style({
+    color:       document.getElementById('ts-subscript-color').value,
+    sizeEm:      document.getElementById('ts-subscript-size').value,
+    fontFamily:  document.getElementById('ts-subscript-font').value,
+    shadowColor: document.getElementById('ts-subscript-shadow-color').value,
+    shadowBlur:  document.getElementById('ts-subscript-shadow-blur').value,
+    shadowX:     document.getElementById('ts-subscript-shadow-x').value,
+    shadowY:     document.getElementById('ts-subscript-shadow-y').value,
+  });
+  localStyles.verseReference = toB64Style({
+    color:       document.getElementById('ts-reference-color').value,
+    sizeEm:      document.getElementById('ts-reference-size').value,
+    fontFamily:  document.getElementById('ts-reference-font').value,
+    bold:        document.getElementById('ts-reference-bold').classList.contains('active'),
+    italic:      document.getElementById('ts-reference-italic').classList.contains('active'),
+    shadowColor: document.getElementById('ts-reference-shadow-color').value,
+    shadowBlur:  document.getElementById('ts-reference-shadow-blur').value,
+    shadowX:     document.getElementById('ts-reference-shadow-x').value,
+    shadowY:     document.getElementById('ts-reference-shadow-y').value,
+    strokeColor: document.getElementById('ts-reference-stroke-color').value,
+    strokeWidth: document.getElementById('ts-reference-stroke-width').value,
+  });
+  localStyles.global = toB64Global({
+    overlayOpacity: document.getElementById('ts-global-overlay').value / 100,
+    bgBlur:         document.getElementById('ts-global-blur').value,
+    lineHeight:     document.getElementById('ts-global-lineheight').value,
+    verticalPosition: getActiveToggle(['ts-global-vpos-top','ts-global-vpos-center','ts-global-vpos-bottom'], 'center'),
+    safeArea: _safeArea,
+    songInline: !!(document.getElementById('sg-inline-lyrics')?.classList.contains('active')),
+  });
+  localStyles.songText = toB64Style({
+    color:          document.getElementById('sg-text-color').value,
+    fontFamily:     document.getElementById('sg-text-font').value,
+    bold:           document.getElementById('sg-text-bold').classList.contains('active'),
+    italic:         document.getElementById('sg-text-italic').classList.contains('active'),
+    letterSpacing:  document.getElementById('sg-text-letterspacing').value,
+    textAlign:      getActiveToggle(['sg-text-align-left','sg-text-align-center','sg-text-align-right'], 'center'),
+    shadowColor:    document.getElementById('sg-text-shadow-color').value,
+    shadowBlur:     document.getElementById('sg-text-shadow-blur').value,
+    shadowX:        document.getElementById('sg-text-shadow-x').value,
+    shadowY:        document.getElementById('sg-text-shadow-y').value,
+    strokeColor:    document.getElementById('sg-text-stroke-color').value,
+    strokeWidth:    document.getElementById('sg-text-stroke-width').value,
+  });
+  localStyles.songReference = toB64Style({
+    color:       document.getElementById('sg-reference-color').value,
+    sizeEm:      document.getElementById('sg-reference-size').value,
+    fontFamily:  document.getElementById('sg-reference-font').value,
+    bold:        document.getElementById('sg-reference-bold').classList.contains('active'),
+    italic:      document.getElementById('sg-reference-italic').classList.contains('active'),
+    shadowColor: document.getElementById('sg-reference-shadow-color').value,
+    shadowBlur:  document.getElementById('sg-reference-shadow-blur').value,
+    shadowX:     document.getElementById('sg-reference-shadow-x').value,
+    shadowY:     document.getElementById('sg-reference-shadow-y').value,
+    strokeColor: document.getElementById('sg-reference-stroke-color').value,
+    strokeWidth: document.getElementById('sg-reference-stroke-width').value,
+  });
+}
+
+// â”€â”€ Populate controls from localStyles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function populateControls() {
+  function setColor(id, b64, def) {
+    const hex = getColorHex(b64) || def;
+    const el = document.getElementById(id);
+    if (el) el.value = hex;
+  }
+  function setSize(id, b64) {
+    const em = getSizeEm(b64);
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    let found = false;
+    for (const opt of sel.options) { if (opt.value === em) { sel.value = em; found = true; break; } }
+    if (!found) sel.value = '';
+  }
+  function setFont(inputId, btnId, b64) {
+    const s = styleFromB64(b64);
+    const font = s.fontFamily || 'Arial';
+    const inp = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (inp) inp.value = font;
+    if (btn) { btn.textContent = font; btn.style.fontFamily = font; }
+  }
+  function setSelect(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.value = val || el.options[0].value;
+  }
+
+  // Text
+  setColor('ts-text-color', localStyles.verseText, '#ffffff');
+  setFont('ts-text-font', 'ts-text-font-btn', localStyles.verseText);
+  const ts = styleFromB64(localStyles.verseText);
+  setToggle('ts-text-bold', ts.fontWeight === 'bold');
+  setToggle('ts-text-italic', ts.fontStyle === 'italic');
+  setActiveToggleGroup(['ts-text-align-left','ts-text-align-center','ts-text-align-right'], ts.textAlign || 'center');
+  setSelect('ts-text-letterspacing', String(ts.letterSpacing || 0));
+  setRange('ts-text-shadow-blur', 'ts-text-shadow-blur-val', ts.shadowBlur || 0, '');
+  setRange('ts-text-shadow-x',    'ts-text-shadow-x-val',    ts.shadowX    || 0, '');
+  setRange('ts-text-shadow-y',    'ts-text-shadow-y-val',    ts.shadowY    || 0, '');
+  const tscEl = document.getElementById('ts-text-shadow-color');
+  if (tscEl) tscEl.value = ts.shadowColor || '#000000';
+  setSelect('ts-text-stroke-width', String(ts.strokeWidth || 0));
+  const tskEl = document.getElementById('ts-text-stroke-color');
+  if (tskEl) tskEl.value = ts.strokeColor || '#000000';
+
+  // Number
+  setColor('ts-number-color', localStyles.verseNumber, '#ffffff');
+  setSize('ts-number-size', localStyles.verseNumber);
+  setFont('ts-number-font', 'ts-number-font-btn', localStyles.verseNumber);
+  const ns = styleFromB64(localStyles.verseNumber);
+  setToggle('ts-number-bold', ns.fontWeight === 'bold');
+  setRange('ts-number-shadow-blur', 'ts-number-shadow-blur-val', ns.shadowBlur || 0, '');
+  setRange('ts-number-shadow-x',    'ts-number-shadow-x-val',    ns.shadowX    || 0, '');
+  setRange('ts-number-shadow-y',    'ts-number-shadow-y-val',    ns.shadowY    || 0, '');
+  const nscEl = document.getElementById('ts-number-shadow-color');
+  if (nscEl) nscEl.value = ns.shadowColor || '#000000';
+  setSelect('ts-number-stroke-width', String(ns.strokeWidth || 0));
+  const nskEl = document.getElementById('ts-number-stroke-color');
+  if (nskEl) nskEl.value = ns.strokeColor || '#000000';
+
+  // Subscript
+  setColor('ts-subscript-color', localStyles.verseSubscript, '#dddddd');
+  setSize('ts-subscript-size', localStyles.verseSubscript);
+  setFont('ts-subscript-font', 'ts-subscript-font-btn', localStyles.verseSubscript);
+  const ss = styleFromB64(localStyles.verseSubscript);
+  setRange('ts-subscript-shadow-blur', 'ts-subscript-shadow-blur-val', ss.shadowBlur || 0, '');
+  setRange('ts-subscript-shadow-x',    'ts-subscript-shadow-x-val',    ss.shadowX    || 0, '');
+  setRange('ts-subscript-shadow-y',    'ts-subscript-shadow-y-val',    ss.shadowY    || 0, '');
+  const sscEl = document.getElementById('ts-subscript-shadow-color');
+  if (sscEl) sscEl.value = ss.shadowColor || '#000000';
+
+  // Reference
+  setColor('ts-reference-color', localStyles.verseReference, '#ffffff');
+  setSize('ts-reference-size', localStyles.verseReference);
+  setFont('ts-reference-font', 'ts-reference-font-btn', localStyles.verseReference);
+  const rs = styleFromB64(localStyles.verseReference);
+  setToggle('ts-reference-bold',   rs.fontWeight === 'bold');
+  setToggle('ts-reference-italic', rs.fontStyle === 'italic');
+  setRange('ts-reference-shadow-blur', 'ts-reference-shadow-blur-val', rs.shadowBlur || 0, '');
+  setRange('ts-reference-shadow-x',    'ts-reference-shadow-x-val',    rs.shadowX    || 0, '');
+  setRange('ts-reference-shadow-y',    'ts-reference-shadow-y-val',    rs.shadowY    || 0, '');
+  const rscEl = document.getElementById('ts-reference-shadow-color');
+  if (rscEl) rscEl.value = rs.shadowColor || '#000000';
+  setSelect('ts-reference-stroke-width', String(rs.strokeWidth || 0));
+  const rskEl = document.getElementById('ts-reference-stroke-color');
+  if (rskEl) rskEl.value = rs.strokeColor || '#000000';
+
+  // Global
+  const g = globalFromB64(localStyles.global);
+  setRange('ts-global-overlay', 'ts-global-overlay-val', Math.round(g.overlayOpacity * 100), '%');
+  setRange('ts-global-blur',    'ts-global-blur-val',    g.bgBlur, 'px');
+  setActiveToggleGroup(['ts-global-vpos-top','ts-global-vpos-center','ts-global-vpos-bottom'], g.verticalPosition || 'center');
+  const lhEl = document.getElementById('ts-global-lineheight');
+  if (lhEl) lhEl.value = String(g.lineHeight);
+  _safeArea = g.safeArea || { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+  setToggle('sg-inline-lyrics', !!g.songInline);
+  setTimeout(updateSafeAreaOverlay, 50);
+
+  // Song Text
+  setColor('sg-text-color', localStyles.songText || localStyles.verseText, '#ffffff');
+  setFont('sg-text-font', 'sg-text-font-btn', localStyles.songText || localStyles.verseText);
+  const sgt = styleFromB64(localStyles.songText || localStyles.verseText);
+  setToggle('sg-text-bold', sgt.fontWeight === 'bold');
+  setToggle('sg-text-italic', sgt.fontStyle === 'italic');
+  setActiveToggleGroup(['sg-text-align-left','sg-text-align-center','sg-text-align-right'], sgt.textAlign || 'center');
+  setSelect('sg-text-letterspacing', String(sgt.letterSpacing || 0));
+  setRange('sg-text-shadow-blur', 'sg-text-shadow-blur-val', sgt.shadowBlur || 0, '');
+  setRange('sg-text-shadow-x',    'sg-text-shadow-x-val',    sgt.shadowX    || 0, '');
+  setRange('sg-text-shadow-y',    'sg-text-shadow-y-val',    sgt.shadowY    || 0, '');
+  const sgtscEl = document.getElementById('sg-text-shadow-color');
+  if (sgtscEl) sgtscEl.value = sgt.shadowColor || '#000000';
+  setSelect('sg-text-stroke-width', String(sgt.strokeWidth || 0));
+  const sgtskEl = document.getElementById('sg-text-stroke-color');
+  if (sgtskEl) sgtskEl.value = sgt.strokeColor || '#000000';
+
+  // Song Reference
+  setColor('sg-reference-color', localStyles.songReference || localStyles.verseReference, '#ffffff');
+  setSize('sg-reference-size', localStyles.songReference || localStyles.verseReference);
+  setFont('sg-reference-font', 'sg-reference-font-btn', localStyles.songReference || localStyles.verseReference);
+  const sgr = styleFromB64(localStyles.songReference || localStyles.verseReference);
+  setToggle('sg-reference-bold',   sgr.fontWeight === 'bold');
+  setToggle('sg-reference-italic', sgr.fontStyle === 'italic');
+  setRange('sg-reference-shadow-blur', 'sg-reference-shadow-blur-val', sgr.shadowBlur || 0, '');
+  setRange('sg-reference-shadow-x',    'sg-reference-shadow-x-val',    sgr.shadowX    || 0, '');
+  setRange('sg-reference-shadow-y',    'sg-reference-shadow-y-val',    sgr.shadowY    || 0, '');
+  const sgrscEl = document.getElementById('sg-reference-shadow-color');
+  if (sgrscEl) sgrscEl.value = sgr.shadowColor || '#000000';
+  setSelect('sg-reference-stroke-width', String(sgr.strokeWidth || 0));
+  const sgrskEl = document.getElementById('sg-reference-stroke-color');
+  if (sgrskEl) sgrskEl.value = sgr.strokeColor || '#000000';
+}
+
+// â”€â”€ Canvas text rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function parseVerseSegments(text) {
+  const segs = [], re = /(\d+)\s{2}/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) { const t = text.substring(last, m.index).trim(); if (t) segs.push({ isNumber:false, text:t }); }
+    segs.push({ isNumber:true, text:m[1] });
+    last = re.lastIndex;
+  }
+  if (last < text.length) { const t = text.substring(last).trim(); if (t) segs.push({ isNumber:false, text:t }); }
+  return segs;
+}
+
+function parseInlineMarkdownWords(s) {
+  const out = [];
+  const tokens = s.split(/(\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/);
+  tokens.forEach(tok => {
+    if (!tok) return;
+    let bold = false, italic = false, raw = tok;
+    if (/^\*\*[^*]+\*\*$/.test(tok) || /^__[^_]+__$/.test(tok)) { bold=true; raw=tok.slice(2,-2); }
+    else if (/^\*[^*]+\*$/.test(tok) || /^_[^_]+_$/.test(tok)) { italic=true; raw=tok.slice(1,-1); }
+    raw.split(' ').forEach((w,i,a) => { if (!w && i<a.length-1) return; out.push({text:w+(i<a.length-1?' ':''), bold, italic}); });
+  });
+  return out;
+}
+
+function wrapTextWithSubscripts(ctx, segs, maxW, baseSize, subMult, fontFamily) {
+  const lines = [];
+  let cur = [], curW = 0;
+  const subSize = baseSize * (subMult || 0.6);
+  const ff = fontFamily || 'Arial';
+  segs.forEach(seg => {
+    if (seg.isNumber) {
+      ctx.font = `${subSize}px "${ff}"`;
+      const w = ctx.measureText(seg.text+' ').width;
+      if (curW+w > maxW && cur.length) { lines.push(cur); cur=[]; curW=0; }
+      cur.push(seg); curW += w;
+      ctx.font = `${baseSize}px "${ff}"`;
+    } else {
+      (seg.words || seg.text.split(' ').map(t=>({text:t+' ',bold:false,italic:false}))).forEach(wo => {
+        const wt = typeof wo === 'string' ? wo : wo.text;
+        ctx.font = `${wo.italic?'italic ':''}${wo.bold?'bold ':''}${baseSize}px "${ff}"`;
+        const w = ctx.measureText(wt).width;
+        if (curW+w > maxW && cur.length) { lines.push(cur); cur=[]; curW=0; }
+        cur.push({isNumber:false,text:wt,bold:!!wo.bold,italic:!!wo.italic}); curW+=w;
+      });
+    }
+  });
+  if (cur.length) lines.push(cur);
+  return lines;
+}
+
+// â”€â”€ Main canvas render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function buildStylesObj() {
+  if (_activeTab === 'songs') {
+    return {
+      text:      styleFromB64(localStyles.songText      || localStyles.verseText),
+      title:     styleFromB64(localStyles.songTitle     || localStyles.verseNumber),
+      reference: styleFromB64(localStyles.songReference || localStyles.verseReference),
+      subscript: styleFromB64(localStyles.verseSubscript),
+      global:    globalFromB64(localStyles.global),
+    };
+  }
+  return {
+    text:      styleFromB64(localStyles.verseText),
+    number:    styleFromB64(localStyles.verseNumber),
+    subscript: styleFromB64(localStyles.verseSubscript),
+    reference: styleFromB64(localStyles.verseReference),
+    global:    globalFromB64(localStyles.global),
+  };
+}
+
+function renderContentToCanvas(canvas, content, stylesObj) {
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const gl = stylesObj.global || {};
+  const overlayOpacity = gl.overlayOpacity !== undefined ? gl.overlayOpacity : 0.4;
+  const bgBlur = parseFloat(gl.bgBlur) || 0;
+  const scale = H / 1080; // normalise spatial values to 1080p
+
+  function applyBg(drawFn) {
+    if (bgBlur > 0) ctx.filter = `blur(${bgBlur * scale}px)`;
+    drawFn();
+    ctx.filter = 'none';
+    ctx.fillStyle = `rgba(0,0,0,${overlayOpacity})`;
+    ctx.fillRect(0, 0, W, H);
+    renderText();
+  }
+
+  if (content.backgroundMedia) {
+    const m = content.backgroundMedia;
+    if (m.type === 'COLOR') {
+      applyBg(() => applyColorToCanvas(ctx, m.color, W, H));
+    } else if (['JPG','JPEG','PNG','WEBP','BMP'].includes(m.type)) {
+      const img = new Image();
+      img.onload = () => applyBg(() => drawImageCover(ctx, img, W, H));
+      img.onerror = () => { ctx.fillStyle='#111'; ctx.fillRect(0,0,W,H); renderText(); };
+      img.src = pathToFileURL(m.path);
+      return;
+    } else if (bgSnapshot) {
+      const img = new Image();
+      img.onload = () => applyBg(() => drawImageCover(ctx, img, W, H));
+      img.onerror = () => { ctx.fillStyle='#111'; ctx.fillRect(0,0,W,H); renderText(); };
+      img.src = bgSnapshot;
+      return;
+    } else {
+      ctx.fillStyle = '#111'; ctx.fillRect(0,0,W,H);
+      renderText();
+    }
+  } else {
+    ctx.fillStyle = '#111'; ctx.fillRect(0,0,W,H);
+    renderText();
+  }
+
+  function fontStr(size, st) {
+    const w = st.fontWeight === 'bold' ? 'bold ' : '';
+    const i = st.fontStyle  === 'italic' ? 'italic ' : '';
+    const f = st.fontFamily || 'Arial';
+    return `${i}${w}${size}px "${f}"`;
+  }
+
+  function applyShadow(st) {
+    const bl = (st.shadowBlur || 0) * scale;
+    const sx = (st.shadowX    || 0) * scale;
+    const sy = (st.shadowY    || 0) * scale;
+    if (bl > 0 || sx !== 0 || sy !== 0) {
+      ctx.shadowColor = st.shadowColor || '#000';
+      ctx.shadowBlur = bl;
+      ctx.shadowOffsetX = sx;
+      ctx.shadowOffsetY = sy;
+    }
+  }
+
+  function clearShadow() {
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  }
+
+  function drawText(text, x, y, st) {
+    applyShadow(st);
+    const sw = (st.strokeWidth || 0) * scale;
+    if (sw > 0) {
+      ctx.strokeStyle = st.strokeColor || '#000';
+      ctx.lineWidth = sw;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(text, x, y);
+    }
+    ctx.fillText(text, x, y);
+    clearShadow();
+  }
+
+  function renderText() {
+    const textSt  = stylesObj.text      || {};
+    const numSt   = stylesObj.number    || {};
+    const subSt   = stylesObj.subscript || {};
+    const refSt   = stylesObj.reference || {};
+    const lhMult  = gl.lineHeight || 1.2;
+    const vpos    = gl.verticalPosition || 'center';
+
+    const _sa2 = gl.safeArea || {};
+    const _sa2X = _sa2.x !== undefined ? _sa2.x : 0.04;
+    const _sa2Y = _sa2.y !== undefined ? _sa2.y : 0.04;
+    const _sa2W = _sa2.w !== undefined ? _sa2.w : 0.92;
+    const _sa2H = _sa2.h !== undefined ? _sa2.h : 0.92;
+    const padL   = W * _sa2X;
+    const padT   = H * _sa2Y;
+    const padR   = padL + W * _sa2W;
+    const padB   = padT + H * _sa2H;
+    const availW = W * _sa2W;
+    const availH = H * _sa2H;
+    let baseSize = H * 0.09;
+
+    const subMult = subSt.sizeMultiplier || 0.6;
+
+    // Letter spacing
+    if ('letterSpacing' in ctx) ctx.letterSpacing = textSt.letterSpacing ? `${textSt.letterSpacing * scale}px` : '0px';
+
+    // Verse number
+    if (content.number) {
+      const mult = numSt.sizeMultiplier || 0.6;
+      ctx.font = fontStr(baseSize * mult, numSt);
+      ctx.fillStyle = numSt.color || '#fff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      drawText(content.number, padL, padT, numSt);
+    }
+
+    // Main text
+    if (content.text) {
+      const textColor = textSt.color || '#fff';
+      const subColor  = subSt.color  || '#ddd';
+      const textAlign = textSt.textAlign || 'center';
+      const _isSong = _activeTab === 'songs';
+      const rawText = (_isSong && gl.songInline) ? content.text.replace(/\n+/g, ' ').trim() : content.text;
+      const textLines = rawText.split('\n');
+
+      function buildLines(size) {
+        ctx.font = fontStr(size, textSt);
+        const all = [];
+        textLines.forEach(line => {
+          const segs = parseVerseSegments(line);
+          segs.forEach(s => { if (!s.isNumber) s.words = parseInlineMarkdownWords(s.text); });
+          all.push(...wrapTextWithSubscripts(ctx, segs, availW, size, subMult, textSt.fontFamily || 'Arial'));
+        });
+        return all;
+      }
+
+      let allLines = buildLines(baseSize);
+      while (true) {
+        const ts = baseSize + 4;
+        const tl = buildLines(ts);
+        if (tl.length * ts * lhMult < availH * 0.82 && ts < H * 0.15) { baseSize = ts; allLines = tl; } else break;
+      }
+      while (allLines.length * baseSize * lhMult > availH && baseSize > 14) { baseSize -= 2; allLines = buildLines(baseSize); }
+
+      const lh = baseSize * lhMult;
+      const totalH = allLines.length * lh;
+      let startY = vpos === 'top' ? padT : vpos === 'bottom' ? padB - totalH : padT + availH / 2 - totalH / 2;
+
+      allLines.forEach((line, i) => {
+        const lineY = startY + i * lh + baseSize / 2;
+        // Measure total width
+        let tw = 0;
+        line.forEach(seg => {
+          if (seg.isNumber) {
+            ctx.font = fontStr(baseSize * subMult, subSt);
+            tw += ctx.measureText(seg.text+' ').width;
+          } else {
+            const merged = { ...textSt, fontWeight: seg.bold ? 'bold' : textSt.fontWeight, fontStyle: seg.italic ? 'italic' : textSt.fontStyle };
+            ctx.font = fontStr(baseSize, merged);
+            tw += ctx.measureText(seg.text).width;
+          }
+        });
+        let x = textAlign === 'left' ? padL : textAlign === 'right' ? padR - tw : padL + availW / 2 - tw / 2;
+
+        ctx.textBaseline = 'alphabetic';
+        line.forEach(seg => {
+          if (seg.isNumber) {
+            const sSz = baseSize * subMult;
+            ctx.font = fontStr(sSz, subSt);
+            ctx.fillStyle = subColor;
+            ctx.textAlign = 'left';
+            drawText(seg.text+' ', x, lineY + sSz * 0.35, subSt);
+            ctx.font = fontStr(sSz, subSt);
+            x += ctx.measureText(seg.text+' ').width;
+          } else {
+            const merged = { ...textSt, fontWeight: seg.bold ? 'bold' : textSt.fontWeight, fontStyle: seg.italic ? 'italic' : textSt.fontStyle };
+            ctx.font = fontStr(baseSize, merged);
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'left';
+            drawText(seg.text, x, lineY, merged);
+            ctx.font = fontStr(baseSize, merged);
+            x += ctx.measureText(seg.text).width;
+          }
+        });
+        ctx.textBaseline = 'middle';
+      });
+
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+    }
+
+    // Reference
+    if (content.reference) {
+      const mult = refSt.sizeMultiplier || 0.7;
+      ctx.font = fontStr(baseSize * mult, refSt);
+      ctx.fillStyle = refSt.color || '#fff';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'alphabetic';
+      drawText(content.reference, padR, padB, refSt);
+    }
+
+    ctx.textBaseline = 'middle';
+  }
+}
+
+// â”€â”€ Re-render preview canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function rerenderCanvas() {
+  const canvas = document.getElementById('sw-canvas');
+  if (!canvas) return;
+  const content = initContent || (_activeTab === 'songs'
+    ? { width: 1920, height: 1080,
+        text: 'Amazing grace, how sweet the sound\nThat saved a wretch like me',
+        reference: 'Amazing Grace \u00b7 Verse 1' }
+    : { width: 1920, height: 1080,
+        text: 'For God so loved the world,\nthat he gave his only begotten Son',
+        number: '16',
+        reference: 'John 3:16' });
+  canvas.width  = content.width  || 1920;
+  canvas.height = content.height || 1080;
+  renderContentToCanvas(canvas, content, buildStylesObj());
+  updateSafeAreaOverlay();
+}
+
+function updateSafeAreaOverlay() {
+  const canvas = document.getElementById('sw-canvas');
+  const box = document.getElementById('safe-area-box');
+  if (!canvas || !box) return;
+  const cw = canvas.offsetWidth;
+  const ch = canvas.offsetHeight;
+  if (!cw || !ch) return;
+  const { x, y, w, h } = _safeArea;
+  box.style.left   = (cw * x) + 'px';
+  box.style.top    = (ch * y) + 'px';
+  box.style.width  = (cw * w) + 'px';
+  box.style.height = (ch * h) + 'px';
+  const info = document.getElementById('sa-overlay-info');
+  if (info) info.textContent = `L:${Math.round(x*100)}%  T:${Math.round(y*100)}%  W:${Math.round(w*100)}%  H:${Math.round(h*100)}%`;
+}
+
+function initSafeAreaDrag() {
+  const overlay = document.getElementById('safe-area-overlay');
+  if (!overlay) return;
+  let dragState = null;
+  overlay.addEventListener('mousedown', (e) => {
+    const handle = e.target.closest('[data-sa-dir]');
+    if (!handle) return;
+    e.preventDefault();
+    const dir = handle.dataset.saDir;
+    const canvas = document.getElementById('sw-canvas');
+    dragState = {
+      dir,
+      startX: e.clientX, startY: e.clientY,
+      cw: canvas.offsetWidth, ch: canvas.offsetHeight,
+      startSa: { ..._safeArea }
+    };
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragState) return;
+    const { dir, startX, startY, cw, ch, startSa } = dragState;
+    const dx = (e.clientX - startX) / cw;
+    const dy = (e.clientY - startY) / ch;
+    const MIN_SZ = 0.05;
+    let { x, y, w, h } = startSa;
+    if (dir === 'move') {
+      x = Math.max(0, Math.min(1 - w, x + dx));
+      y = Math.max(0, Math.min(1 - h, y + dy));
+    } else {
+      if (dir.includes('n')) { const ny = y + dy; const nh = h - dy; if (nh >= MIN_SZ) { y = ny; h = nh; } }
+      if (dir.includes('s')) { h = Math.max(MIN_SZ, Math.min(1 - y, h + dy)); }
+      if (dir.includes('w')) { const nx = x + dx; const nw = w - dx; if (nw >= MIN_SZ) { x = nx; w = nw; } }
+      if (dir.includes('e')) { w = Math.max(MIN_SZ, Math.min(1 - x, w + dx)); }
+      x = Math.max(0, x); y = Math.max(0, y);
+      w = Math.min(1 - x, Math.max(MIN_SZ, w));
+      h = Math.min(1 - y, Math.max(MIN_SZ, h));
+    }
+    _safeArea = { x, y, w, h };
+    updateSafeAreaOverlay();
+    onControlChange();
+  });
+  document.addEventListener('mouseup', () => { dragState = null; });
+}
+
+// â”€â”€ Control change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function onControlChange() {
+  readControlsToLocalStyles();
+  rerenderCanvas();
+}
+
+// -- Sync / Reset helpers (per-display only) ----------------------------------
+function _applyStyleToSection(section, src, isDefaults) {
+  function setColor(id, hex) { const el = document.getElementById(id); if (el) el.value = hex || '#000000'; }
+  function setFont(inputId, btnId, font) {
+    const f = font || 'Arial';
+    const inp = document.getElementById(inputId); if (inp) inp.value = f;
+    const btn = document.getElementById(btnId); if (btn) { btn.textContent = f; btn.style.fontFamily = f; }
+  }
+  function setToggleEl(id, active) { const el = document.getElementById(id); if (el) el.classList.toggle('active', !!active); }
+  function setRangeEl(rangeId, valId, val, suffix) {
+    const r = document.getElementById(rangeId); if (r) r.value = val;
+    const v = document.getElementById(valId); if (v) v.textContent = val + (suffix || '');
+  }
+  function setSelectEl(id, val) { const el = document.getElementById(id); if (el) el.value = String(val != null ? val : ''); }
+
+  if (section === 'verseText') {
+    const s = isDefaults ? src : styleFromB64(src.verseText);
+    setColor('ts-text-color', s.color || '#ffffff');
+    setFont('ts-text-font', 'ts-text-font-btn', s.fontFamily);
+    setToggleEl('ts-text-bold',   s.fontWeight === 'bold');
+    setToggleEl('ts-text-italic', s.fontStyle  === 'italic');
+    setActiveToggleGroup(['ts-text-align-left','ts-text-align-center','ts-text-align-right'], s.textAlign || 'center');
+    setSelectEl('ts-text-letterspacing', s.letterSpacing || 0);
+    setColor('ts-text-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('ts-text-shadow-blur', 'ts-text-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('ts-text-shadow-x',    'ts-text-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('ts-text-shadow-y',    'ts-text-shadow-y-val',    s.shadowY    || 0, '');
+    setSelectEl('ts-text-stroke-width', s.strokeWidth || 0);
+    setColor('ts-text-stroke-color', s.strokeColor || '#000000');
+  } else if (section === 'verseNumber') {
+    const s = isDefaults ? src : styleFromB64(src.verseNumber);
+    setColor('ts-number-color', s.color || '#ffffff');
+    setSelectEl('ts-number-size', isDefaults ? (s.sizeEm || '') : getSizeEm(src.verseNumber));
+    setFont('ts-number-font', 'ts-number-font-btn', s.fontFamily);
+    setToggleEl('ts-number-bold', s.fontWeight === 'bold');
+    setColor('ts-number-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('ts-number-shadow-blur', 'ts-number-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('ts-number-shadow-x',    'ts-number-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('ts-number-shadow-y',    'ts-number-shadow-y-val',    s.shadowY    || 0, '');
+    setSelectEl('ts-number-stroke-width', s.strokeWidth || 0);
+    setColor('ts-number-stroke-color', s.strokeColor || '#000000');
+  } else if (section === 'verseSubscript') {
+    const s = isDefaults ? src : styleFromB64(src.verseSubscript);
+    setColor('ts-subscript-color', s.color || '#dddddd');
+    setSelectEl('ts-subscript-size', isDefaults ? (s.sizeEm || '') : getSizeEm(src.verseSubscript));
+    setFont('ts-subscript-font', 'ts-subscript-font-btn', s.fontFamily);
+    setColor('ts-subscript-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('ts-subscript-shadow-blur', 'ts-subscript-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('ts-subscript-shadow-x',    'ts-subscript-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('ts-subscript-shadow-y',    'ts-subscript-shadow-y-val',    s.shadowY    || 0, '');
+  } else if (section === 'verseReference') {
+    const s = isDefaults ? src : styleFromB64(src.verseReference);
+    setColor('ts-reference-color', s.color || '#ffffff');
+    setSelectEl('ts-reference-size', isDefaults ? (s.sizeEm || '') : getSizeEm(src.verseReference));
+    setFont('ts-reference-font', 'ts-reference-font-btn', s.fontFamily);
+    setToggleEl('ts-reference-bold',   s.fontWeight === 'bold');
+    setToggleEl('ts-reference-italic', s.fontStyle  === 'italic');
+    setColor('ts-reference-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('ts-reference-shadow-blur', 'ts-reference-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('ts-reference-shadow-x',    'ts-reference-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('ts-reference-shadow-y',    'ts-reference-shadow-y-val',    s.shadowY    || 0, '');
+    setSelectEl('ts-reference-stroke-width', s.strokeWidth || 0);
+    setColor('ts-reference-stroke-color', s.strokeColor || '#000000');
+  } else if (section === 'global') {
+    const g = isDefaults ? src : globalFromB64(src.global);
+    setRangeEl('ts-global-overlay', 'ts-global-overlay-val', Math.round((g.overlayOpacity != null ? g.overlayOpacity : 0.4) * 100), '%');
+    setRangeEl('ts-global-blur',    'ts-global-blur-val',    g.bgBlur != null ? g.bgBlur : 0, 'px');
+    setActiveToggleGroup(['ts-global-vpos-top','ts-global-vpos-center','ts-global-vpos-bottom'], g.verticalPosition || 'center');
+    const lhEl = document.getElementById('ts-global-lineheight'); if (lhEl) lhEl.value = String(g.lineHeight != null ? g.lineHeight : 1.2);
+    _safeArea = g.safeArea || { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+    setTimeout(updateSafeAreaOverlay, 50);
+    const inlEl = document.getElementById('sg-inline-lyrics'); if (inlEl) inlEl.classList.toggle('active', !!g.songInline);
+  } else if (section === 'songText') {
+    const s = isDefaults ? src : styleFromB64(src.songText || src.verseText);
+    setColor('sg-text-color', s.color || '#ffffff');
+    setFont('sg-text-font', 'sg-text-font-btn', s.fontFamily);
+    setToggleEl('sg-text-bold',   s.fontWeight === 'bold');
+    setToggleEl('sg-text-italic', s.fontStyle  === 'italic');
+    setActiveToggleGroup(['sg-text-align-left','sg-text-align-center','sg-text-align-right'], s.textAlign || 'center');
+    setSelectEl('sg-text-letterspacing', s.letterSpacing || 0);
+    setColor('sg-text-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('sg-text-shadow-blur', 'sg-text-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('sg-text-shadow-x',    'sg-text-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('sg-text-shadow-y',    'sg-text-shadow-y-val',    s.shadowY    || 0, '');
+    setSelectEl('sg-text-stroke-width', s.strokeWidth || 0);
+    setColor('sg-text-stroke-color', s.strokeColor || '#000000');
+  } else if (section === 'songReference') {
+    const s = isDefaults ? src : styleFromB64(src.songReference || src.verseReference);
+    setColor('sg-reference-color', s.color || '#ffffff');
+    setSelectEl('sg-reference-size', isDefaults ? (s.sizeEm || '') : getSizeEm(src.songReference || src.verseReference));
+    setFont('sg-reference-font', 'sg-reference-font-btn', s.fontFamily);
+    setToggleEl('sg-reference-bold',   s.fontWeight === 'bold');
+    setToggleEl('sg-reference-italic', s.fontStyle  === 'italic');
+    setColor('sg-reference-shadow-color', s.shadowColor || '#000000');
+    setRangeEl('sg-reference-shadow-blur', 'sg-reference-shadow-blur-val', s.shadowBlur || 0, '');
+    setRangeEl('sg-reference-shadow-x',    'sg-reference-shadow-x-val',    s.shadowX    || 0, '');
+    setRangeEl('sg-reference-shadow-y',    'sg-reference-shadow-y-val',    s.shadowY    || 0, '');
+    setSelectEl('sg-reference-stroke-width', s.strokeWidth || 0);
+    setColor('sg-reference-stroke-color', s.strokeColor || '#000000');
+  }
+}
+
+function syncSectionFromGlobal(section) {
+  if (!_globalStyles || !Object.keys(_globalStyles).length) return;
+  _applyStyleToSection(section, _globalStyles, false);
+  onControlChange();
+}
+
+function resetSectionToDefault(section) {
+  const DEFAULTS = {
+    verseText:      { color: '#ffffff', fontFamily: 'Arial', fontWeight: '', fontStyle: '', textAlign: 'center', letterSpacing: 0, shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000', strokeWidth: 0, strokeColor: '#000000' },
+    verseNumber:    { color: '#ffffff', fontFamily: 'Arial', fontWeight: '', sizeEm: '', shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000', strokeWidth: 0, strokeColor: '#000000' },
+    verseSubscript: { color: '#dddddd', fontFamily: 'Arial', sizeEm: '', shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000' },
+    verseReference: { color: '#ffffff', fontFamily: 'Arial', fontWeight: '', fontStyle: '', sizeEm: '', shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000', strokeWidth: 0, strokeColor: '#000000' },
+    global:         { overlayOpacity: 0.4, bgBlur: 20, lineHeight: 1.2, verticalPosition: 'center', songInline: false, safeArea: { x: 0.04, y: 0.04, w: 0.92, h: 0.92 } },
+    songText:       { color: '#ffffff', fontFamily: 'Arial', fontWeight: '', fontStyle: '', textAlign: 'center', letterSpacing: 0, shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000', strokeWidth: 0, strokeColor: '#000000' },
+    songReference:  { color: '#ffffff', fontFamily: 'Arial', fontWeight: '', fontStyle: '', sizeEm: '', shadowBlur: 0, shadowX: 0, shadowY: 0, shadowColor: '#000000', strokeWidth: 0, strokeColor: '#000000' },
+  };
+  const d = DEFAULTS[section];
+  if (!d) return;
+  _applyStyleToSection(section, d, true);
+  onControlChange();
+}
+
+// â”€â”€ IPC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ipcRenderer.on('style-window-init', (event, data) => {
+  localStyles = data.previewStyles ? { ...data.previewStyles } : {};
+  _globalStyles = data.globalStyles ? { ...data.globalStyles } : {};
+  initContent = data.content   || null;
+  bgSnapshot  = data.bgSnapshot || null;
+  _isPerDisplay = data.displayId != null;
+  _displayId    = data.displayId != null ? data.displayId : null;
+  if (data.darkMode) document.body.classList.add('dark');
+  if (_isPerDisplay) document.body.classList.add('per-display');
+  else document.body.classList.remove('per-display');
+  if (_isPerDisplay && data.displayIndex != null) {
+    document.title = `Text Styling - Window ${data.displayIndex}`;
+  }
+  populateControls();
+  rerenderCanvas();
+});
+
+// â”€â”€ DOMContentLoaded â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+document.addEventListener('DOMContentLoaded', () => {
+
+  // Wire range inputs
+  wireRange('ts-global-overlay', 'ts-global-overlay-val', '%');
+  wireRange('ts-global-blur',    'ts-global-blur-val',    'px');
+  wireRange('ts-text-shadow-blur', 'ts-text-shadow-blur-val', '');
+  wireRange('ts-text-shadow-x',    'ts-text-shadow-x-val',    '');
+  wireRange('ts-text-shadow-y',    'ts-text-shadow-y-val',    '');
+  wireRange('ts-number-shadow-blur', 'ts-number-shadow-blur-val', '');
+  wireRange('ts-number-shadow-x',    'ts-number-shadow-x-val',    '');
+  wireRange('ts-number-shadow-y',    'ts-number-shadow-y-val',    '');
+  wireRange('ts-subscript-shadow-blur', 'ts-subscript-shadow-blur-val', '');
+  wireRange('ts-subscript-shadow-x',    'ts-subscript-shadow-x-val',    '');
+  wireRange('ts-subscript-shadow-y',    'ts-subscript-shadow-y-val',    '');
+  wireRange('ts-reference-shadow-blur', 'ts-reference-shadow-blur-val', '');
+  wireRange('ts-reference-shadow-x',    'ts-reference-shadow-x-val',    '');
+  wireRange('ts-reference-shadow-y',    'ts-reference-shadow-y-val',    '');
+  wireRange('sg-text-shadow-blur', 'sg-text-shadow-blur-val', '');
+  wireRange('sg-text-shadow-x',    'sg-text-shadow-x-val',    '');
+  wireRange('sg-text-shadow-y',    'sg-text-shadow-y-val',    '');
+  wireRange('sg-reference-shadow-blur', 'sg-reference-shadow-blur-val', '');
+  wireRange('sg-reference-shadow-x',    'sg-reference-shadow-x-val',    '');
+  wireRange('sg-reference-shadow-y',    'sg-reference-shadow-y-val',    '');
+
+  // Wire toggle groups / simple toggles
+  wireToggleGroup(['ts-global-vpos-top','ts-global-vpos-center','ts-global-vpos-bottom']);
+  wireToggleGroup(['ts-text-align-left','ts-text-align-center','ts-text-align-right']);
+  wireToggle('ts-text-bold');
+  wireToggle('ts-text-italic');
+  wireToggle('ts-number-bold');
+  wireToggle('ts-reference-bold');
+  wireToggle('ts-reference-italic');
+  wireToggleGroup(['sg-text-align-left','sg-text-align-center','sg-text-align-right']);
+  wireToggle('sg-text-bold');
+  wireToggle('sg-text-italic');
+  wireToggle('sg-reference-bold');
+  wireToggle('sg-reference-italic');
+  wireToggle('sg-inline-lyrics');
+
+  // Wire select & color inputs
+  ['ts-global-lineheight',
+   'ts-text-color','ts-text-letterspacing','ts-text-shadow-color','ts-text-stroke-width','ts-text-stroke-color',
+   'ts-number-color','ts-number-size','ts-number-shadow-color','ts-number-stroke-width','ts-number-stroke-color',
+   'ts-subscript-color','ts-subscript-size','ts-subscript-shadow-color',
+   'ts-reference-color','ts-reference-size','ts-reference-shadow-color','ts-reference-stroke-width','ts-reference-stroke-color',
+   'sg-text-color','sg-text-letterspacing','sg-text-shadow-color','sg-text-stroke-width','sg-text-stroke-color',
+   'sg-reference-color','sg-reference-size','sg-reference-shadow-color','sg-reference-stroke-width','sg-reference-stroke-color',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.addEventListener('input', onControlChange); el.addEventListener('change', onControlChange); }
+  });
+
+  // Wire font picker buttons
+  ['ts-text-font-btn','ts-number-font-btn','ts-subscript-font-btn','ts-reference-font-btn',
+   'sg-text-font-btn','sg-reference-font-btn'].forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    const targetId = btnId.replace('-btn', '');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (document.getElementById('font-picker').classList.contains('visible') && _activeFontTarget === targetId) {
+        closeFontPicker();
+      } else {
+        openFontPicker(targetId, btn);
+      }
+    });
+  });
+
+  // Tab switching
+  document.querySelectorAll('.sw-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const t = tab.dataset.tab;
+      if (t === _activeTab) return;
+      _activeTab = t;
+      document.querySelectorAll('.sw-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+      document.querySelectorAll('.sw-tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + t));
+      rerenderCanvas();
+    });
+  });
+
+  document.getElementById('btn-reset-safe-area').addEventListener('click', () => {
+    _safeArea = { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+    onControlChange();
+    updateSafeAreaOverlay();
+  });
+  initSafeAreaDrag();
+
+  // Close picker on outside click
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('font-picker').contains(e.target)) closeFontPicker();
+  });
+
+  // Footer buttons
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    localStyles = {};
+    populateControls();
+    rerenderCanvas();
+  });
+
+  document.getElementById('btn-cancel').addEventListener('click', closeStreamStylePopover);
+
+  // Section sync/reset buttons (per-display only, shown via CSS body.per-display)
+  document.getElementById('controls-wrap').addEventListener('click', (e) => {
+    const syncBtn = e.target.closest('[data-sync-section]');
+    if (syncBtn) { syncSectionFromGlobal(syncBtn.dataset.syncSection); return; }
+    const resetBtn = e.target.closest('[data-reset-section]');
+    if (resetBtn) { resetSectionToDefault(resetBtn.dataset.resetSection); return; }
+  });
+
+  document.getElementById('btn-save').addEventListener('click', () => {
+    readControlsToLocalStyles();
+    window.parent.postMessage({type:'liturgia-program-style-save',styles:{...localStyles}}, '*');
+  });
+});
+</script>
+
+</body>
+</html>

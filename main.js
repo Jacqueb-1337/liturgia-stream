@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, session, safeStorage, dialog } = require('electron');
 const { createSettingsStore } = require('./settingsStore');
 const { executableCandidates, probeFirstAvailable, buildRtmpUrl } = require('./ffmpegRuntime');
-const { StreamOutputManager } = require('./outputManager');
+const { MultiOutputManager } = require('./multiOutputManager');
+const { openFacebookProducer } = require('./facebookProducer');
 const { createUpdateService } = require('./updateService');
 const { autoUpdater } = require('electron-updater');
 
@@ -22,6 +23,8 @@ let encoderProbe = null;
 let outputManager = null;
 let updateService = null;
 let quitAfterOutputStopped = false;
+const targetServerById = new Map();
+const facebookPromptedAt = new Map();
 
 function getEncoderInfo() {
   if (!encoderProbe) {
@@ -102,6 +105,43 @@ function requestWorshipStyles(key, method, styles) {
   });
 }
 
+function requestWorshipDisplayProfiles(key,method='GET',id=null,body=null) {
+  const instance=discovered.get(key);
+  if(!instance?.styleToken||instance.displayId!=='0') {
+    return Promise.reject(new Error('Connect the primary Liturgia Worship Program instance to edit display profiles.'));
+  }
+  const encoded=id?'/'+encodeURIComponent(id):'';
+  const payload=body?JSON.stringify(body):'';
+  return new Promise((resolve,reject)=>{
+    const request=http.request({
+      hostname:instance.address,port:instance.port,
+      path:'/program-displays'+encoded,method,timeout:6000,
+      headers:{'X-Liturgia-Stream-Token':instance.styleToken,
+        'Content-Type':'application/json','Content-Length':Buffer.byteLength(payload)}
+    },response=>{
+      let result='';
+      response.on('data',chunk=>{
+        result+=chunk;
+        if(result.length>4*1024*1024)response.destroy(new Error('Display profile response was too large.'));
+      });
+      response.on('end',()=>{
+        try{
+          const parsed=JSON.parse(result);
+          if(response.statusCode!==200){
+            const error=new Error(parsed.error||'Could not synchronize Program displays.');
+            error.status=response.statusCode;throw error;
+          }
+          resolve(parsed.displays||[]);
+        }catch(error){reject(error)}
+      });
+      response.on('error',reject);
+    });
+    request.on('timeout',()=>request.destroy(new Error('Liturgia Worship did not respond.')));
+    request.on('error',reject);
+    request.end(payload);
+  });
+}
+
 function startDiscovery() {
   if (browser) browser.stop();
   if (bonjour) bonjour.destroy();
@@ -151,7 +191,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   settingsStore = createSettingsStore(app.getPath('userData'), safeStorage);
-  outputManager = new StreamOutputManager();
+  outputManager = new MultiOutputManager();
   updateService = createUpdateService({
     updater: autoUpdater,
     app,
@@ -168,22 +208,40 @@ app.whenReady().then(() => {
   ipcMain.handle('stream:update:release', () => require('electron').shell.openExternal('https://github.com/Jacqueb-1337/liturgia-stream/releases/latest'));
   outputManager.on('status', (status) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:output:status', status);
+    if (status.state === 'reconnecting' && status.sourceId &&
+        /facebook\.com/i.test(targetServerById.get(status.sourceId) || '') &&
+        /error opening output|io error|end of file|closed|rejected|failed/i.test(status.error || '')) {
+      const last = facebookPromptedAt.get(status.sourceId) || 0;
+      if (Date.now() - last > 10 * 60 * 1000) {
+        facebookPromptedAt.set(status.sourceId, Date.now());
+        openFacebookProducer(mainWindow);
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:facebook:help', status.sourceId);
+      }
+    }
   });
   ipcMain.handle('stream:config:get', () => settingsStore.load());
-  ipcMain.handle('stream:output:start', async () => {
-    const [destination, config, runtime] = await Promise.all([
-      settingsStore.getDestinationCredentials(),
+  ipcMain.handle('stream:output:start', async (_event, ids = null) => {
+    const [destinations, config, runtime] = await Promise.all([
+      settingsStore.getDestinationCredentialsByIds(ids),
       settingsStore.load(),
       getEncoderInfo()
     ]);
-    return outputManager.start({
-      runtime,
-      output: config.output,
-      outputUrl: buildRtmpUrl(destination.server, destination.streamKey)
+    const mapped = destinations.map(({ id, name, server, streamKey }) => {
+      targetServerById.set(id, server);
+      return { id, name, outputUrl: buildRtmpUrl(server, streamKey) };
     });
+    return outputManager.start({ runtime, output: config.output, destinations: mapped });
   });
   ipcMain.handle('stream:output:chunk', (_event, data) => outputManager.writeChunk(data));
-  ipcMain.handle('stream:output:stop', () => outputManager.stop());
+  ipcMain.handle('stream:output:stop', (_event, id = null) => outputManager.stop(id));
+  ipcMain.handle('stream:output:status:get', () => outputManager.snapshot());
+  ipcMain.handle('stream:destination:save', (_event, item) => settingsStore.saveDestination(item));
+  ipcMain.handle('stream:destination:delete', async (_event, id) => {
+    await outputManager.stop(id);
+    return settingsStore.deleteDestination(id);
+  });
+  ipcMain.handle('stream:quality:save', (_event, output) => settingsStore.saveOutput(output));
+  ipcMain.handle('stream:facebook:open', () => { openFacebookProducer(mainWindow); return true; });
   ipcMain.handle('stream:encoder:info', async () => {
     const info = await getEncoderInfo();
     return {
@@ -196,6 +254,23 @@ app.whenReady().then(() => {
   ipcMain.handle('stream:config:save', (_event, config) => settingsStore.save(config));
   ipcMain.handle('stream:scenes:save', (_event, scenes, activeSceneId) => settingsStore.saveScenes(scenes, activeSceneId));
   ipcMain.handle('stream:devices:save', (_event, devices) => settingsStore.saveDevices(devices));
+  ipcMain.handle('stream:offline-frame:save', async (_event, id, dataUrl) => {
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{4,90}$/.test(id)) throw new Error('Invalid layer ID.');
+    if (typeof dataUrl !== 'string' || !/^data:image\/webp;base64,/.test(dataUrl) || dataUrl.length > 9*1024*1024) throw new Error('Invalid offline frame.');
+    const directory=path.join(app.getPath('userData'),'offline-program-frames');
+    await fs.promises.mkdir(directory,{recursive:true});
+    const bytes=Buffer.from(dataUrl.slice(dataUrl.indexOf(',')+1),'base64');
+    if(bytes.length>6*1024*1024)throw new Error('Offline frame is too large.');
+    await fs.promises.writeFile(path.join(directory,id+'.webp'),bytes);
+    return true;
+  });
+  ipcMain.handle('stream:offline-frame:load', async (_event,id) => {
+    if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{4,90}$/.test(id))return null;
+    try {
+      const bytes=await fs.promises.readFile(path.join(app.getPath('userData'),'offline-program-frames',id+'.webp'));
+      return bytes.length<=6*1024*1024?'data:image/webp;base64,'+bytes.toString('base64'):null;
+    } catch(error){if(error.code==='ENOENT')return null;throw error}
+  });
   ipcMain.handle('stream:image:choose', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] });
     return selection.canceled ? null : selection.filePaths[0];
@@ -219,6 +294,10 @@ app.whenReady().then(() => {
     return publicInstances();
   });
   ipcMain.handle('worship:instances', () => publicInstances());
+  ipcMain.handle('worship:profiles:list', (_event, key) => requestWorshipDisplayProfiles(key));
+  ipcMain.handle('worship:profiles:create', (_event, key, data) => requestWorshipDisplayProfiles(key,'POST',null,data));
+  ipcMain.handle('worship:profiles:update', (_event, key, id, data) => requestWorshipDisplayProfiles(key,'PUT',id,data));
+  ipcMain.handle('worship:profiles:delete', (_event, key, id) => requestWorshipDisplayProfiles(key,'DELETE',id));
   ipcMain.handle('worship:styles:get', (_event, key) => requestWorshipStyles(key, 'GET'));
   ipcMain.handle('worship:styles:save', (_event, key, styles) => requestWorshipStyles(key, 'PUT', styles));
   createWindow();

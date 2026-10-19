@@ -53,6 +53,31 @@ let worshipStyleInstanceKey = '';
 let worshipStyleSaveTimer = null;
 let scenes = [];
 let activeSceneId = 'camera-program';
+let liveSceneSnapshot = null;
+let liveProgramCanvas = null;
+let liveProgramContext = null;
+let sceneChangesPending = false;
+let thumbnailLastDraw = 0;
+const sceneThumbnailCanvases = new Map();
+function cloneSceneForLive(scene) {
+  const clone = structuredClone(scene);
+  if (clone?.custom) clone.layers = clone.layers.map(layer => ({ ...layer, id: 'live-' + layer.id }));
+  return clone;
+}
+function markSceneChanged() {
+  if (outputActive && liveSceneSnapshot) {
+    sceneChangesPending = true;
+    const apply = document.getElementById('apply-scene-live');
+    if (apply) apply.hidden = false;
+  }
+}
+function applySceneChangesLive() {
+  liveSceneSnapshot = cloneSceneForLive(currentScene());
+  sceneChangesPending = false;
+  document.getElementById('apply-scene-live').hidden = true;
+  updateProgramReceivers();
+}
+
 let selectedDevices = { cameraId: '', microphoneId: '' };
 async function saveDeviceSelections() {
   try {
@@ -80,6 +105,7 @@ function sceneHasSource(scene, type) {
 }
 
 function sendProgramSourceStyles(layer) {
+  if(layer.type==='widgets')return;
   const receiver = programReceivers.get(layer.id);
   if (receiver?.ready) receiver.iframe.contentWindow.postMessage({
     type: 'liturgia-stream-styles', layerId: layer.id, styles: layer.sourceStyles || {}
@@ -89,8 +115,9 @@ function sendProgramSourceStyles(layer) {
 function updateProgramReceivers() {
   const scene = currentScene();
   const instance = instancesByKey.get(selectedInstanceKey);
-  const requested = scene?.custom && instance?.url
-    ? scene.layers.filter((layer) => layer.type === 'program' && layer.visible) : [];
+  const requested = instance?.url ? [scene, liveSceneSnapshot]
+    .filter(item => item?.custom)
+    .flatMap(item => item.layers.filter(layer => ['program','widgets'].includes(layer.type) && layer.visible)) : [];
   const keep = new Set(requested.map((layer) => layer.id));
   for (const [id, receiver] of programReceivers) {
     const layer = requested.find((item) => item.id === id);
@@ -113,7 +140,8 @@ function updateProgramReceivers() {
     programReceivers.set(layer.id, receiver);
     programReceiverHost.append(iframe);
     const options = new URLSearchParams({ stream: '1', layer: layer.id });
-    if (layer.transparent) { options.set('t', '1'); options.set('c', '1'); }
+    if (layer.type === 'widgets') options.set('widgetOnly','1');
+    if (layer.transparent || layer.type === 'widgets') { options.set('t', '1'); options.set('c', '1'); }
     iframe.src = `${instance.url}?${options}`;
   }
 }
@@ -128,7 +156,10 @@ window.addEventListener('message', (event) => {
   }
   if (data.type === 'liturgia-stream-ready') {
     receiver.ready = true;
-    const layer = currentScene()?.layers?.find((item) => item.id === data.layerId);
+    const layer = [currentScene(), liveSceneSnapshot]
+      .filter(item => item?.custom)
+      .flatMap(item => item.layers)
+      .find(item => item.id === data.layerId);
     if (layer) sendProgramSourceStyles(layer);
   } else if (data.type === 'liturgia-stream-frame' && data.frame instanceof ImageBitmap) {
     receiver.frame?.close();
@@ -147,19 +178,22 @@ function applyScene() {
   const scene = currentScene();
   if (!scene) return;
   const hasProgram = sceneHasSource(scene, 'program') && (scene.custom
-    ? scene.layers.some((layer) => layer.visible && layer.type === 'program' && programReceivers.get(layer.id)?.frame)
+    ? scene.layers.some((layer) => layer.visible && layer.type === 'program' &&
+      ((programSocket?.readyState===WebSocket.OPEN && programReceivers.get(layer.id)?.frame) ||
+       (layer.offlineMode==='preserve' && offlineProgramImages.get(layer.id)) ||
+       (layer.offlineMode==='placeholder' && layer.offlineText)))
     : !!programFrame);
   const hasCamera = sceneHasSource(scene, 'camera') && !!cameraStream;
-  const hasOther = scene.custom && scene.layers.some((layer) => layer.visible && (layer.type === 'text' || (layer.type === 'image' && imageCache.get(layer.imagePath)?.complete)));
+  const hasOther = scene.custom && scene.layers.some((layer) => layer.visible && (layer.type === 'text' || layer.type === 'widgets' && !!programReceivers.get(layer.id)?.frame || (layer.type === 'image' && imageCache.get(layer.imagePath)?.complete)));
   preview.hidden = !hasProgram && !hasCamera && !hasOther;
   sceneCameraPreview.hidden = true;
   previewEmpty.hidden = hasProgram || hasCamera || hasOther;
   previewState.textContent = scene.name;
   if (!hasProgram && !hasCamera && !hasOther) {
     const needsProgram = sceneHasSource(scene, 'program');
-    previewEmpty.querySelector('h2').textContent = needsProgram ? 'Connect to Liturgia Worship' : sceneHasSource(scene, 'camera') ? 'Choose a camera' : 'Add a layer';
+    previewEmpty.querySelector('h2').textContent = needsProgram ? '' : sceneHasSource(scene, 'camera') ? 'Choose a camera' : 'Add a layer';
     previewEmpty.querySelector('p').textContent = needsProgram
-      ? 'Worship’s Program output will appear here when it’s found on your network.'
+      ? ''
       : sceneHasSource(scene, 'camera') ? 'Choose a camera on the Video Devices tab to preview this scene.' : 'Add a layer on the Scenes tab.';
   }
 }
@@ -199,8 +233,15 @@ function drawCustomLayer(ctx, layer) {
     const lines = layer.text.split('\n');
     lines.forEach((line, index) => ctx.fillText(line, layer.x + 12 - layer.panX * 5, layer.y + 12 - layer.panY * 5 + index * layer.fontSize * 1.2));
   } else {
-    const source = layer.type === 'program' ? programReceivers.get(layer.id)?.frame : layer.type === 'camera' ?
-      (cameraStream && sceneCameraPreview.readyState >= 2 ? sceneCameraPreview : null) : imageCache.get(layer.imagePath);
+    const incoming=(layer.type === 'program' || layer.type === 'widgets') && programSocket?.readyState===WebSocket.OPEN
+      ? programReceivers.get(layer.id)?.frame : null;
+    if (layer.type === 'program' && incoming) rememberProgramFrame(layer,incoming);
+    const source = incoming || (layer.type==='program' && layer.offlineMode==='preserve' ? offlineProgramImages.get(layer.id) : null) || (layer.type === 'camera' ?
+      (cameraStream && sceneCameraPreview.readyState >= 2 ? sceneCameraPreview : null) : layer.type==='image'?imageCache.get(layer.imagePath):null);
+    if (!source && layer.type==='program' && layer.offlineMode==='placeholder' && layer.offlineText) {
+      ctx.fillStyle='#ffffff';ctx.font='600 52px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(layer.offlineText,layer.x+layer.width/2,layer.y+layer.height/2,layer.width-32);
+    }
     if (source && (layer.type !== 'image' || source.complete)) {
       const sourceWidth = source.videoWidth || source.width;
       const sourceHeight = source.videoHeight || source.height;
@@ -249,6 +290,18 @@ function drawPreview() {
   const scene = currentScene();
   paintScene(previewContext, scene);
   if (scene?.custom && !customEditor.hidden) paintScene(editorContext, scene);
+  if (liveSceneSnapshot && liveProgramContext) paintScene(liveProgramContext, liveSceneSnapshot);
+  const now = performance.now();
+  if (now - thumbnailLastDraw > 300) {
+    thumbnailLastDraw = now;
+    for (const item of scenes) {
+      const thumbnail = sceneThumbnailCanvases.get(item.id);
+      if (!thumbnail) continue;
+      const context = thumbnail.getContext('2d');
+      context.save(); context.scale(thumbnail.width / 1920, thumbnail.height / 1080);
+      paintScene(context, item); context.restore();
+    }
+  }
   requestAnimationFrame(drawPreview);
 }
 
@@ -281,6 +334,7 @@ function acceptProgramFrame(blob) {
 
 function renderScenes() {
   sceneList.replaceChildren();
+  sceneThumbnailCanvases.clear();
   for (const scene of scenes) {
     const button = document.createElement('button');
     button.className = 'scene-card button secondary';
@@ -294,7 +348,12 @@ function renderScenes() {
     sources.textContent = scene.custom
       ? `${scene.layers.length} layer${scene.layers.length === 1 ? '' : 's'} · Custom`
       : [scene.cameraVisible ? 'Camera' : '', scene.programVisible ? 'Liturgia Program' : ''].filter(Boolean).join(' + ') || 'No sources';
-    button.append(name, sources);
+    const thumbnail = document.createElement('canvas');
+    thumbnail.className = 'scene-thumbnail';
+    thumbnail.width = 192; thumbnail.height = 108;
+    thumbnail.setAttribute('aria-hidden', 'true');
+    sceneThumbnailCanvases.set(scene.id, thumbnail);
+    button.append(thumbnail, name, sources);
     button.addEventListener('click', () => selectScene(scene.id));
     sceneList.append(button);
   }
@@ -309,20 +368,24 @@ async function selectScene(sceneId) {
   activeSceneId = sceneId;
   renderScenes();
   sceneMessage.textContent = `Previewing “${selected.name}”.`;
+  markSceneChanged();
   await persistScenes();
 }
 
 function newLayer(type) {
-  const base = { id: crypto.randomUUID(), type, name: { program: 'Liturgia Program', camera: 'Camera', image: 'Image', text: 'Text' }[type],
+  const base = { id: crypto.randomUUID(), type, name: { program: 'Liturgia Program', widgets: 'Worship Widgets', camera: 'Camera', image: 'Image', text: 'Text' }[type],
     x: 0, y: 0, width: 1920, height: 1080, cropLeft: 0, cropTop: 0, cropRight: 0, cropBottom: 0,
     panX: 0, panY: 0, zoom: 1, opacity: 1, brightness: 100, contrast: 100, saturation: 100, hue: 0, visible: true, locked: false,
     text: type === 'text' ? 'Your text' : '', fontSize: 72, color: '#ffffff', imagePath: '', transparent: false, sourceStyles: {} };
+  if (type === 'widgets') Object.assign(base, { x: 0, y: 0, width: 1920, height: 1080, transparent: true });
+  if (type === 'program') Object.assign(base, { offlineMode: 'none', offlineText: '' });
   if (type === 'camera') Object.assign(base, { x: 1150, y: 60, width: 640, height: 360 });
   if (type === 'text') Object.assign(base, { x: 160, y: 820, width: 1600, height: 150 });
   return base;
 }
 
 function persistScenes() {
+  markSceneChanged();
   // Serialize edits so an earlier disk write cannot overwrite a newer drag or field change.
   const snapshot = JSON.parse(JSON.stringify(scenes));
   const sceneId = activeSceneId;
@@ -352,6 +415,299 @@ function updateSelectionOutline() {
   });
 }
 
+const offlineProgramImages=new Map();
+const offlineFrameSavedAt=new Map();
+const offlineCaptureCanvas=document.createElement('canvas');
+offlineCaptureCanvas.width=1280;offlineCaptureCanvas.height=720;
+const offlineCaptureCtx=offlineCaptureCanvas.getContext('2d');
+async function loadOfflineProgramFrame(layer) {
+  if(offlineProgramImages.has(layer.id))return;
+  offlineProgramImages.set(layer.id,null);
+  try {
+    const uri=await window.liturgiaStream.loadOfflineProgramFrame(layer.id);
+    if(!uri)return;
+    const image=new Image();
+    image.onload=()=>{offlineProgramImages.set(layer.id,image)};
+    image.src=uri;
+  }catch(error){console.warn('Offline frame read failed:',error.message)}
+}
+function rememberProgramFrame(layer,frame) {
+  if(layer.offlineMode!=='preserve')return;
+  const now=Date.now();
+  if(now-(offlineFrameSavedAt.get(layer.id)||0)<8000)return;
+  offlineFrameSavedAt.set(layer.id,now);
+  try {
+    offlineCaptureCtx.clearRect(0,0,1280,720);
+    offlineCaptureCtx.drawImage(frame,0,0,1280,720);
+    const uri=offlineCaptureCanvas.toDataURL('image/webp',.72);
+    const img=new Image();
+    img.onload=()=>offlineProgramImages.set(layer.id,img);
+    img.src=uri;
+    void window.liturgiaStream.saveOfflineProgramFrame(layer.id,uri).catch(e=>console.warn('Offline frame save:',e.message));
+  } catch(error) {console.warn('Offline capture:',error.message)}
+}
+const offlineEditor=document.getElementById('offline-program-dialog');
+let offlineEditorLayerId=null;
+function editOfflineProgramLayer(id){
+  const layer=currentScene()?.layers?.find(item=>item.id===id);
+  if(!layer || layer.type!=='program')return;
+  offlineEditorLayerId=id;
+  document.getElementById('offline-program-mode').value=layer.offlineMode||'none';
+  document.getElementById('offline-program-text').value=layer.offlineText||'';
+  offlineEditor.showModal();
+}
+document.getElementById('offline-program-close').onclick=()=>offlineEditor.close();
+document.getElementById('offline-program-save').onclick=()=>{
+  const layer=currentScene()?.layers?.find(item=>item.id===offlineEditorLayerId);
+  if(!layer)return;
+  layer.offlineMode=document.getElementById('offline-program-mode').value;
+  layer.offlineText=document.getElementById('offline-program-text').value.slice(0,500);
+  if(layer.offlineMode==='preserve')void loadOfflineProgramFrame(layer);
+  offlineEditor.close();
+  void persistScenes();
+};
+
+const programPicker = document.getElementById('program-display-picker');
+const programStyleDialog = document.getElementById('program-style-dialog');
+const programStyleFrame = document.getElementById('program-style-frame');
+let programProfiles = [];
+let programProfileOwnerKey = '';
+let programPickerLayerId = null;
+let editingProgramLayerId = null;
+let editingProgramRevision = null;
+let programProfileRefreshBusy = false;
+let programProfilePollingTimer = null;
+
+function profileServiceKey() {
+  const chosen=instancesByKey.get(selectedInstanceKey);
+  if(chosen?.styleAvailable)return selectedInstanceKey;
+  const primary=[...instancesByKey.values()].find(item=>item.displayId==='0'&&item.styleAvailable
+    &&chosen&&item.address===chosen.address);
+  return primary?.key||'';
+}
+function profileForLayer(layer) {
+  return programProfiles.find(p => p.id === layer?.worshipProfileId) || null;
+}
+async function refreshProgramDisplayProfiles() {
+  if (programProfileRefreshBusy || !profileServiceKey()) return;
+  programProfileRefreshBusy = true;
+  const key = profileServiceKey();
+  try {
+    let updated = await window.liturgiaStream.getProgramDisplayProfiles(key);
+    if (key !== profileServiceKey()) return;
+    // First connection imports the existing Camera + Liturgia configuration
+    // into Worship as a persistent named display. Later Stream computers
+    // simply discover and reuse the Worship-owned profile.
+    if (!updated.length) {
+      const source=scenes.find(s=>s.id==='camera-program')?.layers?.find(l=>l.type==='program')
+        || scenes.find(s=>s.name==='Custom Scene 1')?.layers?.find(l=>l.type==='program');
+      if (source) {
+        const styles={...source.sourceStyles};
+        if (!styles.global) styles.global='safe-area-x: 0.04; safe-area-y: 0.69; safe-area-w: 0.92; safe-area-h: 0.27; vertical-position: bottom;';
+        updated=await window.liturgiaStream.createProgramDisplayProfile(key,{
+          name:'Stream Default',styles,layout:programLayoutFromLayer(source)
+        });
+        const builtin=scenes.find(s=>s.id==='camera-program')?.layers?.find(l=>l.type==='program');
+        if(builtin && updated[0]){
+          builtin.worshipProfileId=updated[0].id;
+          builtin.worshipProfileRevision=updated[0].revision;
+          builtin.sourceStyles=structuredClone(updated[0].styles);
+          void persistScenes();
+        }
+      }
+    }
+    programProfileOwnerKey = key;
+    programProfiles = updated;
+    if (programPicker.open) {
+      const dropdown=document.getElementById('program-picker-list');
+      const selected=dropdown.value;
+      dropdown.replaceChildren();
+      for(const profile of updated){const option=document.createElement('option');option.value=profile.id;option.textContent=profile.name;dropdown.append(option)}
+      if(updated.some(p=>p.id===selected))dropdown.value=selected;
+      document.getElementById('program-picker-select').disabled=!updated.length;
+    }
+    let changed = false;
+    for (const scene of scenes) {
+      if (!scene.custom) continue;
+      for (const layer of scene.layers) {
+        if (layer.type !== 'program' || !layer.worshipProfileId) continue;
+        const remote = updated.find(p => p.id === layer.worshipProfileId);
+        if (!remote || remote.revision === layer.worshipProfileRevision) continue;
+        layer.sourceStyles = structuredClone(remote.styles);
+        Object.assign(layer,remote.layout || {});
+        layer.worshipProfileRevision = remote.revision;
+        changed = true;
+      }
+    }
+    if (changed) {
+      updateProgramReceivers();
+      renderCustomEditor();
+      markSceneChanged();
+      void persistScenes();
+    }
+  } catch (error) {
+    // Old Worship versions may not have display profiles yet; leave sources intact.
+    if (programPicker.open) document.getElementById('program-picker-status').textContent = error.message;
+  } finally {
+    programProfileRefreshBusy = false;
+  }
+}
+function initProgramEditorContent() {
+  if (!programStyleDialog.open || !editingProgramLayerId || !programStyleFrame.contentWindow) return;
+  const layer = currentScene()?.layers?.find(l=>l.id===editingProgramLayerId);
+  const profile = profileForLayer(layer);
+  if (!layer || !profile) return;
+  const encode = css => btoa(unescape(encodeURIComponent(css)));
+  const styles = Object.fromEntries(Object.entries(profile.styles || {})
+    .filter(([,css])=>typeof css === 'string' && css)
+    .map(([key,css])=>[key,encode(css)]));
+  const globalStyles=Object.fromEntries(Object.entries(worshipStyles||{})
+    .filter(([,css])=>typeof css === 'string' && css)
+    .map(([key,css])=>[key,encode(css)]));
+  programStyleFrame.contentWindow.postMessage({
+    type:'liturgia-program-style-init',
+    payload:{ previewStyles:styles,globalStyles,content:null,displayId:0,
+      displayIndex:profile.name,programProfileName:profile.name,darkMode:true,bgSnapshot:null }
+  },'*');
+}
+
+async function openProgramDisplayPicker(layerId=null) {
+  programPickerLayerId=layerId;
+  document.getElementById('program-picker-title').textContent =
+    layerId?'Choose display for this Liturgia Program layer':'Add Liturgia Program layer';
+  document.getElementById('program-picker-status').textContent='';
+  document.getElementById('program-new-name').value='';
+  programPicker.showModal();
+  await refreshProgramDisplayProfiles();
+  const list=document.getElementById('program-picker-list');
+  list.replaceChildren();
+  for(const item of programProfiles){
+    const option=document.createElement('option');
+    option.value=item.id;option.textContent=item.name;
+    list.append(option);
+  }
+  const layer=currentScene()?.layers?.find(l=>l.id===layerId);
+  if (layer?.worshipProfileId && programProfiles.some(p=>p.id===layer.worshipProfileId)) list.value=layer.worshipProfileId;
+  document.getElementById('program-picker-select').disabled=!programProfiles.length;
+}
+
+const PROGRAM_LAYOUT_FIELDS=['x','y','width','height','opacity','transparent',
+  'cropLeft','cropTop','cropRight','cropBottom','panX','panY','zoom'];
+function programLayoutFromLayer(layer) {
+  return Object.fromEntries(PROGRAM_LAYOUT_FIELDS.map(key=>[key,layer[key]]).filter(([,value])=>value!==undefined));
+}
+let programLayoutSaveQueue=Promise.resolve();
+function syncProgramLayerLayout(layer) {
+  if(layer?.type!=='program'||!layer.worshipProfileId||!profileServiceKey())return;
+  const id=layer.worshipProfileId;
+  const layout=programLayoutFromLayer(layer);
+  const key=profileServiceKey();
+  programLayoutSaveQueue=programLayoutSaveQueue.catch(()=>{}).then(async()=>{
+    if(key!==profileServiceKey())return;
+    const profile=programProfiles.find(p=>p.id===id);
+    if(!profile)return;
+    try{
+      const updated=await window.liturgiaStream.updateProgramDisplayProfile(key,id,{
+        layout,expectedRevision:profile.revision
+      });
+      programProfiles=updated;
+      const latest=updated.find(p=>p.id===id);
+      for(const scene of scenes)for(const item of scene.layers||[])if(item.worshipProfileId===id){
+        if(latest) item.worshipProfileRevision=latest.revision;
+      }
+      void persistScenes();
+    }catch(error){
+      sceneMessage.textContent='Worship layout sync: '+error.message;
+      void refreshProgramDisplayProfiles();
+    }
+  });
+}
+function takeProgramProfile(profile) {
+  const scene=currentScene();
+  if(!scene?.custom) return;
+  let layer=scene.layers.find(l=>l.id===programPickerLayerId);
+  if(!layer){
+    if(scene.layers.length>=20) {sceneMessage.textContent='Maximum of 20 layers reached.';return}
+    layer=newLayer('program');
+    layer.transparent=true;
+    scene.layers.push(layer);
+  }
+  layer.worshipProfileId=profile.id;
+  layer.worshipProfileRevision=profile.revision;
+  layer.sourceStyles=structuredClone(profile.styles);
+  Object.assign(layer,profile.layout||{});
+  selectedLayerId=layer.id;
+  programPicker.close();
+  renderScenes();
+  void persistScenes();
+}
+document.getElementById('program-picker-close').onclick=()=>programPicker.close();
+document.getElementById('program-picker-select').onclick=()=>{
+  const profile=programProfiles.find(p=>p.id===document.getElementById('program-picker-list').value);
+  if(profile)takeProgramProfile(profile);
+};
+document.getElementById('program-picker-create').onclick=async()=>{
+  const input=document.getElementById('program-new-name');
+  const status=document.getElementById('program-picker-status');
+  const name=input.value.trim();
+  if(!name){status.textContent='Enter a display name.';return}
+  const original=currentScene()?.layers?.find(l=>l.id===programPickerLayerId);
+  try {
+    const result=await window.liturgiaStream.createProgramDisplayProfile(profileServiceKey(),{
+      name,styles:original?.sourceStyles || {},layout:original ? programLayoutFromLayer(original) : undefined
+    });
+    programProfiles=result;
+    const created=result.at(-1);
+    if(created)takeProgramProfile(created);
+  } catch(error){status.textContent=error.message}
+};
+document.getElementById('program-style-change').onclick=()=>{
+  const layerId=editingProgramLayerId;
+  programStyleDialog.close();
+  void openProgramDisplayPicker(layerId);
+};
+document.getElementById('program-style-close').onclick=()=>programStyleDialog.close();
+programStyleDialog.addEventListener('close',()=>{editingProgramLayerId=null;editingProgramRevision=null});
+programStyleFrame.addEventListener('load',initProgramEditorContent);
+async function editProgramLayer(id) {
+  const layer=currentScene()?.layers?.find(l=>l.id===id);
+  if(!layer || layer.type!=='program')return;
+  selectedLayerId=id;
+  const profile=profileForLayer(layer);
+  if(!profile){void openProgramDisplayPicker(id);return}
+  editingProgramLayerId=id;
+  editingProgramRevision=profile.revision;
+  document.getElementById('program-style-title').textContent=profile.name + ' · Worship display';
+  document.getElementById('program-style-status').textContent='Uses Worship’s original text styling editor. This display is shared between computers. Changes stay in Stream Preview until taken live.';
+  programStyleDialog.showModal();
+  initProgramEditorContent();
+}
+window.addEventListener('message', async event=>{
+  if(event.source!==programStyleFrame.contentWindow || !programStyleDialog.open)return;
+  const data=event.data;
+  if(data?.type==='liturgia-program-style-close'){programStyleDialog.close();return}
+  if(data?.type!=='liturgia-program-style-save')return;
+  const layer=currentScene()?.layers?.find(l=>l.id===editingProgramLayerId);
+  const profile=profileForLayer(layer);
+  if(!profile)return;
+  const decode=base64=>new TextDecoder().decode(Uint8Array.from(atob(base64),c=>c.charCodeAt(0)));
+  const styles={};
+  for(const [key,base64] of Object.entries(data.styles||{})){
+    if(typeof base64==='string')styles[key]=base64?decode(base64):'';
+  }
+  const status=document.getElementById('program-style-status');
+  status.textContent='Saving to Liturgia Worship…';
+  try {
+    programProfiles=await window.liturgiaStream.updateProgramDisplayProfile(profileServiceKey(),profile.id,{
+      styles,expectedRevision:editingProgramRevision
+    });
+    await refreshProgramDisplayProfiles();
+    programStyleDialog.close();
+    status.textContent='Saved on Worship.';
+  } catch(error){status.textContent='Could not save: '+error.message}
+});
+programProfilePollingTimer=window.setInterval(()=>{void refreshProgramDisplayProfiles()},4000);
+
 function renderCustomEditor() {
   const scene = currentScene();
   customEditor.hidden = !scene?.custom;
@@ -362,6 +718,7 @@ function renderCustomEditor() {
   for (let index = scene.layers.length - 1; index >= 0; index--) {
     const layer = scene.layers[index];
     if (layer.type === 'image') loadLayerImage(layer.imagePath);
+    if (layer.type === 'program' && layer.offlineMode==='preserve')void loadOfflineProgramFrame(layer);
     const row = document.createElement('div');
     row.className = 'layer-row';
     row.classList.toggle('selected', layer.id === selectedLayerId);
@@ -386,6 +743,10 @@ function renderCustomEditor() {
       row.append(button);
     };
     row.append(select);
+    if (layer.type === 'program') {
+      control('✎', 'Edit Worship display styles and layout', () => { void editProgramLayer(layer.id); });
+      control('⚙', 'Configure source when Worship disconnects', () => editOfflineProgramLayer(layer.id));
+    }
     control(layer.visible ? '◉' : '○', layer.visible ? 'Hide source' : 'Show source', () => {
       layer.visible = !layer.visible; renderCustomEditor(); applyScene(); persistScenes();
     });
@@ -405,9 +766,9 @@ function renderCustomEditor() {
     layerList.append(row);
   }
   const layer = selectedLayer();
-  layerProperties.hidden = !layer;
+  layerProperties.hidden = !layer || layer.type === 'program';
   customEditor.classList.toggle('program-source-selected', layer?.type === 'program');
-  worshipStyleController.setLayer(layer?.type === 'program' ? layer : null);
+  worshipStyleController.setLayer(null);
   if (layer) {
     document.getElementById('layer-name').value = layer.name;
     document.getElementById('layer-text').value = layer.text;
@@ -457,7 +818,11 @@ document.getElementById('custom-scene-name').addEventListener('change', (event) 
 document.getElementById('add-layer').addEventListener('click', () => {
   const scene = currentScene();
   if (!scene?.custom || scene.layers.length >= 20) { sceneMessage.textContent = 'Maximum of 20 layers reached.'; return; }
-  const layer = newLayer(document.getElementById('add-layer-type').value);
+  const type=document.getElementById('add-layer-type').value;
+  if(type==='program' && profileServiceKey()){
+    void openProgramDisplayPicker();return;
+  }
+  const layer = newLayer(type);
   scene.layers.push(layer);
   selectedLayerId = layer.id;
   renderScenes(); persistScenes();
@@ -466,6 +831,7 @@ document.getElementById('layer-transparent').addEventListener('change', (event) 
   const layer = selectedLayer();
   if (layer?.type !== 'program') return;
   layer.transparent = event.target.checked;
+  syncProgramLayerLayout(layer);
   updateProgramReceivers();
   applyScene();
   persistScenes();
@@ -499,18 +865,21 @@ for (const input of layerProperties.querySelectorAll('[data-layer-field]')) {
     };
     const measured = ['cropLeft', 'cropTop', 'cropRight', 'cropBottom', 'opacity'].includes(field) ? value / 100 : value;
     layer[field] = Math.max(bounds[field][0], Math.min(bounds[field][1], measured));
+    if(layer.type==='program')syncProgramLayerLayout(layer);
     renderCustomEditor(); persistScenes();
   });
 }
 document.getElementById('layer-fit').onclick = () => {
   const layer = selectedLayer(); if (!layer) return;
   Object.assign(layer, { x: 0, y: 0, width: 1920, height: 1080 });
+  if(layer.type==='program')syncProgramLayerLayout(layer);
   renderCustomEditor(); persistScenes();
 };
 document.getElementById('layer-center').onclick = () => {
   const layer = selectedLayer(); if (!layer) return;
   layer.x = Math.round((1920 - layer.width) / 2);
   layer.y = Math.round((1080 - layer.height) / 2);
+  if(layer.type==='program')syncProgramLayerLayout(layer);
   renderCustomEditor(); persistScenes();
 };
 function duplicateSelectedLayer() {
@@ -573,11 +942,29 @@ editorInteraction.addEventListener('pointermove', (event) => {
     layer.x = Math.max(-1920, Math.min(3840, pointerDrag.original.x + dx));
     layer.y = Math.max(-1080, Math.min(2160, pointerDrag.original.y + dy));
   }
+  const snapping=event.shiftKey?'grid':event.ctrlKey?'align':null;
+  const grid=document.getElementById('editor-snap-grid');
+  const guides=document.getElementById('editor-snap-guides');
+  grid.hidden=snapping!=='grid';
+  guides.hidden=snapping!=='align';
+  if(snapping){
+    const adjusted=window.liturgiaSnap.snapBounds({...layer,id:layer.id},currentScene(),snapping);
+    if(pointerDrag.resize){layer.width=adjusted.width;layer.height=adjusted.height}
+    else {layer.x=adjusted.x;layer.y=adjusted.y}
+    if(snapping==='align') {
+      guides.querySelector('.guide-x').style.left=adjusted.guideX==null?'-100%':(adjusted.guideX/1920*100)+'%';
+      guides.querySelector('.guide-y').style.top=adjusted.guideY==null?'-100%':(adjusted.guideY/1080*100)+'%';
+    }
+  }
   updateSelectionOutline();
 });
 function finishPointerDrag() {
   if (!pointerDrag) return;
+  const moved=selectedLayer();
+  if(moved?.type==='program')syncProgramLayerLayout(moved);
   pointerDrag = null;
+  document.getElementById('editor-snap-grid').hidden=true;
+  document.getElementById('editor-snap-guides').hidden=true;
   renderCustomEditor();
   persistScenes();
 }
@@ -604,7 +991,10 @@ function showLayerMenu(event) {
 layerMenu.addEventListener('click', (event) => {
   const action = event.target.closest('[data-menu-action]')?.dataset.menuAction;
   layerMenu.hidden = true;
-  if (action === 'edit') layerProperties.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  if (action === 'edit') {
+    if (selectedLayer()?.type === 'program') void editProgramLayer(selectedLayerId);
+    else layerProperties.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
   if (action === 'duplicate') duplicateSelectedLayer();
   if (action === 'fit') document.getElementById('layer-fit').click();
   if (action === 'remove') document.getElementById('layer-remove').click();
@@ -639,6 +1029,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowDown') layer.y += amount;
   layer.x = Math.max(-1920, Math.min(3840, layer.x));
   layer.y = Math.max(-1080, Math.min(2160, layer.y));
+  if(layer.type==='program')syncProgramLayerLayout(layer);
   renderCustomEditor();
   persistScenes();
 });
@@ -678,8 +1069,11 @@ async function loadWorshipStyles(key) {
 function connectToInstance(key) {
   const instance = instancesByKey.get(key);
   if (!instance) return;
+  const previous=selectedInstanceKey;
   selectedInstanceKey = key;
+  if(previous !== key){programProfiles=[];programProfileOwnerKey='';}
   if (worshipStyleInstanceKey !== key) void loadWorshipStyles(key);
+  void refreshProgramDisplayProfiles();
   headerStatus.classList.remove('connected');
   worshipStatus.textContent = 'Connecting to Liturgia Program';
   if (programSocket) programSocket.close();
@@ -720,10 +1114,13 @@ function renderInstances(items) {
   const list = [...instancesByKey.values()];
   if (selectedInstanceKey && !instancesByKey.has(selectedInstanceKey)) {
     selectedInstanceKey = '';
+    programProfiles=[];
+    programProfileOwnerKey='';
     if (programSocket) programSocket.close();
     programSocket = null;
     if (programFrame) programFrame.close();
     programFrame = null;
+    updateProgramReceivers();
     applyScene();
   }
   if (!selectedInstanceKey) {
@@ -893,35 +1290,145 @@ const presetOutput = {
 const destinationStatus = document.getElementById('destination-status');
 const saveDestinationButton = document.getElementById('save-destination');
 const applyLiveSettingsButton = document.getElementById('apply-live-settings');
+const destinationGrid = document.getElementById('destination-cards');
+const destinationEditor = document.getElementById('destination-editor');
+const destinationEditorForm = document.getElementById('destination-editor-form');
+let editingDestinationId = null;
+let destinations = [];
+const destinationStates = new Map();
 let pendingSavedStreamConfig = null;
+
+function destinationState(id) {
+  return destinationStates.get(id) || 'offline';
+}
+
+function renderDestinationCards() {
+  destinationGrid.replaceChildren();
+  for (const item of destinations) {
+    const tile = document.createElement('div');
+    tile.className = 'destination-tile';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'destination-connect';
+    open.setAttribute('aria-label', 'Connect or disconnect ' + item.name);
+    const name = document.createElement('strong');
+    name.textContent = item.name;
+    const state = document.createElement('span');
+    state.className = 'destination-state destination-state-' + destinationState(item.id);
+    const current = destinationState(item.id);
+    state.textContent = current === 'offline' ? 'Click to connect' :
+      current === 'live' ? 'Sending stream · click to disconnect' :
+      current === 'reconnecting' ? 'Reconnecting · click to disconnect' :
+      current === 'connecting' ? 'Connecting · click to disconnect' : 'Click to connect';
+    const host = document.createElement('small');
+    try { host.textContent = new URL(item.server).hostname; } catch (_) { host.textContent = 'RTMP destination'; }
+    open.append(name, host, state);
+    open.addEventListener('click', () => { void toggleDestination(item.id); });
+    const actions = document.createElement('div');
+    actions.className = 'destination-tile-actions';
+    const edit = document.createElement('button');
+    edit.type = 'button'; edit.textContent = '✎'; edit.title = 'Edit ' + item.name;
+    edit.setAttribute('aria-label', 'Edit ' + item.name);
+    edit.addEventListener('click', () => openDestinationEditor(item.id));
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.textContent = '×'; remove.title = 'Delete ' + item.name;
+    remove.className = 'destination-tile-trash';
+    remove.setAttribute('aria-label', 'Delete ' + item.name);
+    remove.addEventListener('click', () => { void deleteDestination(item.id); });
+    actions.append(edit, remove);
+    tile.append(open, actions);
+    destinationGrid.append(tile);
+  }
+  const add = document.createElement('button');
+  add.type = 'button'; add.className = 'destination-add';
+  add.setAttribute('aria-label', 'Add streaming destination');
+  const plus = document.createElement('span'); plus.textContent = '+';
+  const label = document.createElement('small'); label.textContent = 'Add destination';
+  add.append(plus, label);
+  add.addEventListener('click', () => openDestinationEditor(null));
+  destinationGrid.append(add);
+  if (typeof renderLiveDestinations === 'function') renderLiveDestinations();
+}
+
+function openDestinationEditor(id) {
+  editingDestinationId = id;
+  const item = destinations.find(d => d.id === id);
+  document.getElementById('destination-editor-title').textContent = item ? 'Edit destination' : 'Add destination';
+  document.getElementById('destination-name').value = item?.name || '';
+  document.getElementById('stream-server').value = item?.server || '';
+  document.getElementById('stream-key').value = '';
+  document.getElementById('stream-key').placeholder = item?.keySaved ? 'Saved securely · leave blank to keep' : 'Enter stream key';
+  document.getElementById('delete-destination-in-editor').hidden = !item;
+  destinationEditor.showModal();
+  document.getElementById('destination-name').focus();
+}
+function closeDestinationEditor() { destinationEditor.close(); editingDestinationId = null; }
+document.getElementById('destination-editor-close').addEventListener('click', closeDestinationEditor);
+document.getElementById('cancel-destination-edit').addEventListener('click', closeDestinationEditor);
+destinationEditor.addEventListener('close', () => { editingDestinationId = null; });
+
+async function refreshDestinationList() {
+  const config = await window.liturgiaStream.getConfig();
+  destinations = Array.isArray(config.destinations) ? config.destinations : [];
+  renderDestinationCards();
+  return config;
+}
+
+async function deleteDestination(id) {
+  const item = destinations.find(d => d.id === id);
+  if (!item) return;
+  if (!(await confirmAction('Delete ' + item.name + '? The saved stream key will be deleted too.', 'Delete destination'))) return;
+  try {
+    await window.liturgiaStream.deleteDestination(id);
+    destinationStates.delete(id);
+    if (destinationEditor.open) closeDestinationEditor();
+    await refreshDestinationList();
+    destinationStatus.textContent = item.name + ' deleted.';
+  } catch (error) { destinationStatus.textContent = error.message; }
+}
+document.getElementById('delete-destination-in-editor').addEventListener('click', () => {
+  const id = editingDestinationId;
+  if (id) void deleteDestination(id);
+});
+
+destinationEditorForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  saveDestinationButton.disabled = true;
+  try {
+    const saved = await window.liturgiaStream.saveDestination({
+      id: editingDestinationId,
+      name: document.getElementById('destination-name').value,
+      server: document.getElementById('stream-server').value,
+      streamKey: document.getElementById('stream-key').value
+    });
+    const wasConnected = destinationState(saved.id) !== 'offline';
+    closeDestinationEditor();
+    await refreshDestinationList();
+    destinationStatus.textContent = saved.name + (wasConnected
+      ? ' saved. Disconnect and reconnect this destination to apply the new server/key.'
+      : ' saved securely.');
+  } catch (error) {
+    destinationStatus.textContent = error.message;
+  } finally { saveDestinationButton.disabled = false; }
+});
 
 async function loadEncoderInfo() {
   const infoElement = document.getElementById('encoder-info');
   try {
     const info = await window.liturgiaStream.getEncoderInfo();
     infoElement.textContent = info.available
-      ? `Available in FFmpeg: ${info.supported.join(', ')}. Actual device availability is checked when streaming starts.`
+      ? 'Available in FFmpeg: ' + info.supported.join(', ') + '. One encoder is shared by all destinations.'
       : info.error;
-  } catch (error) {
-    infoElement.textContent = `Encoder detection failed: ${error.message}`;
-  }
+  } catch (error) { infoElement.textContent = 'Encoder detection failed: ' + error.message; }
 }
 
 async function loadStreamConfig() {
   try {
-    const config = await window.liturgiaStream.getConfig();
+    const config = await refreshDestinationList();
     selectedDevices = config.devices || selectedDevices;
     scenes = Array.isArray(config.scenes) ? config.scenes : [];
     activeSceneId = config.activeSceneId || 'camera-program';
     renderScenes();
-    if (config.destination) {
-      document.getElementById('destination-name').value = config.destination.name;
-      document.getElementById('stream-server').value = config.destination.server;
-      document.getElementById('stream-key').placeholder = config.destination.keySaved ? 'Saved securely · leave blank to keep' : 'Enter your stream key';
-      destinationStatus.textContent = config.destination.keySaved
-        ? 'Destination saved securely on this computer.'
-        : 'Your saved key could not be opened. Enter it again to replace it.';
-    }
     const output = config.output || {};
     const preset = Object.entries(presetOutput).find(([, value]) =>
       value.width === output.width && value.height === output.height && value.fps === output.fps
@@ -929,45 +1436,30 @@ async function loadStreamConfig() {
     if (preset) document.getElementById('output-preset').value = preset[0];
     if (Number.isFinite(output.videoBitrateKbps)) document.getElementById('video-bitrate').value = output.videoBitrateKbps;
     if (Number.isFinite(output.audioBitrateKbps)) document.getElementById('audio-bitrate').value = output.audioBitrateKbps;
-  } catch (error) {
-    destinationStatus.textContent = `Could not load saved settings: ${error.message}`;
-  }
+    destinationStatus.textContent = destinations.length
+      ? destinations.length + ' destination(s) saved securely.' : 'Add a destination to begin.';
+  } catch (error) { destinationStatus.textContent = 'Could not load saved settings: ' + error.message; }
 }
 
-saveDestinationButton.addEventListener('click', async () => {
-  saveDestinationButton.disabled = true;
-  destinationStatus.textContent = 'Saving securely…';
+document.getElementById('save-quality').addEventListener('click', async () => {
   const preset = presetOutput[document.getElementById('output-preset').value] || presetOutput['1080p30'];
   try {
-    const config = await window.liturgiaStream.saveConfig({
-      destination: {
-        name: document.getElementById('destination-name').value,
-        server: document.getElementById('stream-server').value,
-        streamKey: document.getElementById('stream-key').value
-      },
-      output: {
-        ...preset,
-        videoBitrateKbps: Number(document.getElementById('video-bitrate').value) || 6000,
-        audioBitrateKbps: Number(document.getElementById('audio-bitrate').value) || 160,
-        audioSampleRate: 48000
-      }
+    const output = await window.liturgiaStream.saveQuality({
+      ...preset,
+      videoBitrateKbps: Number(document.getElementById('video-bitrate').value) || 6000,
+      audioBitrateKbps: Number(document.getElementById('audio-bitrate').value) || 160,
+      audioSampleRate: 48000
     });
-    document.getElementById('stream-key').value = '';
-    document.getElementById('stream-key').placeholder = 'Saved securely · leave blank to keep';
     if (outputActive) {
-      pendingSavedStreamConfig = config;
+      pendingSavedStreamConfig = { output };
       applyLiveSettingsButton.hidden = false;
-      destinationStatus.textContent = `Saved. The current stream is still using ${currentOutputConfig.videoBitrateKbps} kbps video. Apply the saved settings to reconnect, or leave them for next time.`;
+      destinationStatus.textContent = 'Quality saved. Apply it to restart the shared encoder, or leave the current stream running.';
     } else {
       pendingSavedStreamConfig = null;
       applyLiveSettingsButton.hidden = true;
-      destinationStatus.textContent = `“${config.destination.name}” saved securely on this computer.`;
+      destinationStatus.textContent = 'Shared quality saved.';
     }
-  } catch (error) {
-    destinationStatus.textContent = error.message;
-  } finally {
-    saveDestinationButton.disabled = false;
-  }
+  } catch (error) { destinationStatus.textContent = error.message; }
 });
 
 let outputActive = false;
@@ -1046,15 +1538,32 @@ async function stopOutputRecorder() {
 
 async function startOutputRecorder() {
   if (outputMediaRecorder && outputMediaRecorder.state === 'recording') return;
-  const scene = currentScene();
+  const scene = liveSceneSnapshot || currentScene();
   if (!scene) throw new Error('Choose a scene before going live.');
   if (sceneHasSource(scene, 'camera') && !cameraStream) await ensureCameraReady();
-  if (sceneHasSource(scene, 'program') && (scene.custom
-    ? !scene.layers.some((layer) => layer.type === 'program' && layer.visible && programReceivers.get(layer.id)?.frame)
-    : !programFrame)) throw new Error('Waiting for Liturgia Program video. Make sure Worship is presenting.');
+  if (sceneHasSource(scene, 'program')) {
+    const ready = () => scene.custom
+      ? scene.layers.some(layer => layer.visible && layer.type === 'program' && programReceivers.get(layer.id)?.frame)
+      : !!programFrame;
+    // A newly taken scene's dedicated live receiver may load after the encoder.
+    for (let attempt = 0; !ready() && attempt < 40 && outputActive && !userStoppingOutput; attempt++) {
+      await new Promise(resolve => window.setTimeout(resolve, 150));
+    }
+    if (!ready()) throw new Error('Waiting for the live Liturgia Program source. Make sure Worship is presenting.');
+  }
   if (selectedDevices.microphoneId) await ensureMicrophoneReady();
 
-  outputCanvasStream = preview.captureStream(currentOutputConfig.fps);
+  if (!liveProgramCanvas) {
+    liveProgramCanvas = document.createElement('canvas');
+    liveProgramCanvas.width = 1920;
+    liveProgramCanvas.height = 1080;
+    liveProgramContext = liveProgramCanvas.getContext('2d');
+  }
+  if (!liveSceneSnapshot) {
+    liveSceneSnapshot = cloneSceneForLive(currentScene());
+    updateProgramReceivers();
+  }
+  outputCanvasStream = liveProgramCanvas.captureStream(currentOutputConfig.fps);
   outputAudioContext = new AudioContext({ sampleRate: currentOutputConfig.audioSampleRate });
   await outputAudioContext.resume();
   const destination = outputAudioContext.createMediaStreamDestination();
@@ -1104,7 +1613,92 @@ async function startOutputRecorder() {
   recorder.start(100);
 }
 
+
+function renderLiveDestinations() {
+  const list = document.getElementById('live-target-statuses');
+  if (!list) return;
+  list.replaceChildren();
+  for (const d of destinations) {
+    const line = document.createElement('div');
+    line.className = 'live-target-row';
+    const name = document.createElement('span');
+    name.textContent = d.name;
+    const state = document.createElement('span');
+    state.className = 'destination-state destination-state-' + destinationState(d.id);
+    const current = destinationState(d.id);
+    state.textContent = current === 'offline' ? 'Offline' : current === 'live' ? 'Live feed' :
+      current === 'reconnecting' ? 'Retrying' : 'Connecting';
+    line.append(name, state);
+    list.append(line);
+  }
+  const anyActive = destinations.some(d => destinationState(d.id) !== 'offline');
+  const allActive = destinations.length > 0 && destinations.every(d => destinationState(d.id) !== 'offline');
+  goLiveButton.textContent = allActive ? 'Stop all outputs' :
+    anyActive ? 'Connect remaining & start all' : 'Connect & start all';
+}
+async function toggleDestination(id) {
+  const item = destinations.find(d => d.id === id);
+  if (!item) return;
+  if (destinationState(id) !== 'offline') {
+    try {
+      destinationStates.set(id, 'offline');
+      await window.liturgiaStream.stopOutput(id);
+      renderDestinationCards();
+    } catch (error) { destinationStatus.textContent = error.message; }
+    return;
+  }
+  try {
+    const config = await checkLiveReadiness();
+    currentOutputConfig = { ...currentOutputConfig, ...(config.output || {}) };
+    if (!outputActive) applySceneChangesLive();
+    outputActive = true;
+    destinationStates.set(id, 'connecting');
+    renderDestinationCards();
+    await window.liturgiaStream.startOutput([id]);
+  } catch (error) {
+    destinationStates.set(id, 'offline');
+    if (![...destinationStates.values()].some(s => s !== 'offline')) outputActive = false;
+    destinationStatus.textContent = error.message;
+    renderDestinationCards();
+  }
+}
+window.liturgiaStream.onFacebookHelp(id => {
+  const d = destinations.find(x => x.id === id);
+  if (!d) return;
+  streamStatusDetail.textContent = 'Facebook declined ' + d.name +
+    '. Live Producer is open. Complete setup, then click Go Live after checking the preview.';
+  document.getElementById('facebook-producer-help').hidden = false;
+});
+document.getElementById('facebook-producer-help').addEventListener('click', () => {
+  void window.liturgiaStream.openFacebookProducer();
+});
+document.getElementById('apply-scene-live').addEventListener('click', () => {
+  if (!outputActive || !sceneChangesPending) return;
+  applySceneChangesLive();
+  streamStatusDetail.textContent = 'Live program switched to ' + (currentScene()?.name || 'the selected scene') + '.';
+});
+
 async function handleOutputStatus(status) {
+  if (status.sourceId) {
+    destinationStates.set(status.sourceId, status.state === 'stopped' ? 'offline' : status.state);
+    renderDestinationCards();
+    if (status.state === 'live') {
+      if (!outputStartedAt) {
+        outputStartedAt = Date.now();
+        streamElapsed.hidden = false;
+        updateStreamElapsed();
+        outputClockTimer = window.setInterval(updateStreamElapsed, 1000);
+      }
+      streamStatusLabel.textContent = 'Sending video';
+      largeStatusDot.classList.add('live');
+    }
+    if (status.state === 'reconnecting') {
+      streamStatusLabel.textContent = 'Destination reconnecting';
+      streamStatusDetail.textContent = (status.name || 'Destination') + ': ' + (status.error || 'Connection interrupted.') +
+        ' Retrying in ' + Math.ceil((status.retryInMs || 0) / 1000) + ' seconds.';
+    }
+    return;
+  }
   if (status.state === 'awaiting-input') {
     try {
       await outputReconnectPreparation;
@@ -1143,6 +1737,13 @@ async function handleOutputStatus(status) {
     streamStatusLabel.textContent = 'Ending stream…';
   } else if (status.state === 'stopped') {
     outputActive = false;
+    liveSceneSnapshot = null;
+    sceneChangesPending = false;
+    document.getElementById('apply-scene-live').hidden = true;
+    updateProgramReceivers();
+    // This also happens when the final card is disconnected individually.
+    // Release MediaRecorder/audio tracks even without a global Stop click.
+    void stopOutputRecorder();
     userStoppingOutput = false;
     pendingSavedStreamConfig = null;
     applyLiveSettingsButton.hidden = true;
@@ -1154,14 +1755,15 @@ async function handleOutputStatus(status) {
     largeStatusDot.classList.remove('live');
     streamStatusLabel.textContent = 'Not streaming';
     streamStatusDetail.textContent = 'Your settings are saved for next time.';
-    goLiveButton.textContent = 'Connect Stream';
+    destinationStates.clear();
+    renderDestinationCards();
     goLiveButton.disabled = false;
   } else if (status.state === 'connecting') {
     streamStatusLabel.textContent = 'Starting…';
     streamStatusDetail.textContent = status.message || 'Starting the stream encoder.';
   }
   if (outputActive && status.state !== 'stopped') {
-    goLiveButton.textContent = 'Disconnect';
+    renderLiveDestinations();
     goLiveButton.disabled = applyingStreamSettings;
   }
   if (applyingStreamSettings) goLiveButton.disabled = true;
@@ -1179,7 +1781,11 @@ async function stopLiveStream() {
 
 async function checkLiveReadiness() {
   const config = await window.liturgiaStream.getConfig();
-  if (!config.destination?.keySaved) throw new Error('Save an RTMP or RTMPS destination and stream key first.');
+  if (!config.destinations?.length) throw new Error('Add at least one stream destination first.');
+  if (!config.destinations.some(d => d.keySaved)) throw new Error('Enter a stream key for a destination first.');
+  // Adding an output while already live must not depend on a scene that is
+  // only staged in Preview: the existing on-air snapshot remains authoritative.
+  if (outputActive && liveSceneSnapshot) return config;
   const scene = currentScene();
   if (!scene || (scene.custom ? !scene.layers.some((layer) => layer.visible) : !scene.cameraVisible && !scene.programVisible)) throw new Error('Choose a scene with a visible source.');
   if (sceneHasSource(scene, 'camera') && !selectedDevices.cameraId) {
@@ -1196,6 +1802,7 @@ async function startLiveStream(config) {
   if (sceneHasSource(scene, 'camera')) await ensureCameraReady();
   if (selectedDevices.microphoneId) await ensureMicrophoneReady();
   currentOutputConfig = { ...currentOutputConfig, ...(config.output || {}) };
+  if (!outputActive) applySceneChangesLive();
   outputActive = true;
   goLiveButton.textContent = 'Starting…';
   goLiveButton.disabled = true;
@@ -1204,7 +1811,7 @@ async function startLiveStream(config) {
     await window.liturgiaStream.startOutput();
   } catch (error) {
     outputActive = false;
-    goLiveButton.textContent = 'Connect Stream';
+    renderLiveDestinations();
     goLiveButton.disabled = false;
     throw error;
   }
@@ -1243,29 +1850,32 @@ applyLiveSettingsButton.addEventListener('click', async () => {
 
 goLiveButton.addEventListener('click', async () => {
   if (applyingStreamSettings) return;
-  if (outputActive) {
-    if (!(await confirmAction('Disconnect Liturgia Stream from the streaming destination?', 'Disconnect'))) return;
+  const remaining = destinations.filter(d => destinationState(d.id) === 'offline');
+  if (!remaining.length && outputActive) {
+    if (!(await confirmAction('Disconnect every streaming destination?', 'Disconnect all'))) return;
     try { await stopLiveStream(); }
     catch (error) { streamStatusDetail.textContent = error.message; }
     return;
   }
   let config;
-  try {
-    config = await checkLiveReadiness();
-  } catch (error) {
-    streamStatusDetail.textContent = error.message;
-    return;
-  }
-  if (!(await confirmAction('Connect to your streaming destination? The broadcast will not become public until you go live on the platform.', 'Connect'))) return;
+  try { config = await checkLiveReadiness(); }
+  catch (error) { streamStatusDetail.textContent = error.message; return; }
+  if (!(await confirmAction('Connect all remaining destinations? Facebook will need you to press Go Live after its preview is ready.', 'Connect all'))) return;
   goLiveButton.disabled = true;
   try {
-    await startLiveStream(config);
+    currentOutputConfig = { ...currentOutputConfig, ...(config.output || {}) };
+    if (!outputActive) { applySceneChangesLive(); outputActive = true; }
+    const ids = remaining.map(d => d.id);
+    for (const id of ids) destinationStates.set(id, 'connecting');
+    renderDestinationCards();
+    await window.liturgiaStream.startOutput(ids);
+    renderLiveDestinations();
   } catch (error) {
-    streamStatusLabel.textContent = 'Not streaming';
     streamStatusDetail.textContent = error.message;
-    goLiveButton.textContent = 'Connect Stream';
-    goLiveButton.disabled = false;
-  }
+    for (const d of remaining) destinationStates.set(d.id, 'offline');
+    if (![...destinationStates.values()].some(s => s !== 'offline')) outputActive = false;
+    renderDestinationCards();
+  } finally { goLiveButton.disabled = false; }
 });
 window.liturgiaStream.onOutputStatus((status) => { void handleOutputStatus(status); });
 
@@ -1302,6 +1912,7 @@ const updateUi = {
   run: document.getElementById('update-run')
 };
 let currentUpdateState = { phase: 'idle', supported: false };
+let autoOpenedUpdateVersion = '';
 function setUpdatePopoverOpen(open) {
   updateUi.panel.hidden = !open;
   updateUi.toggle.setAttribute('aria-expanded', String(open));
@@ -1311,6 +1922,10 @@ function renderUpdateStatus(status) {
   const phase = status.phase || 'idle';
   const version = status.latestVersion || '';
   const ready = phase === 'downloaded';
+  if ((phase === 'available' || ready) && version && autoOpenedUpdateVersion !== version) {
+    autoOpenedUpdateVersion = version;
+    setUpdatePopoverOpen(true);
+  }
   updateUi.indicator.hidden = !(phase === 'available' || phase === 'downloading' || ready);
   updateUi.indicator.classList.toggle('ready', ready);
   updateUi.toggle.title = ready ? `Update ${version} ready to install` : phase === 'available' ? `Update ${version} available` : 'Check for updates';
