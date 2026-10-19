@@ -1632,6 +1632,10 @@ async function startOutputRecorder() {
     updateProgramReceivers();
   }
   outputCanvasStream = liveProgramCanvas.captureStream(currentOutputConfig.fps);
+  // Static scenes do not necessarily trigger canvas-capture frames on every
+  // platform. Force an initial painted frame before MediaRecorder begins.
+  paintScene(liveProgramContext, liveSceneSnapshot);
+  try { outputCanvasStream.getVideoTracks()[0]?.requestFrame?.(); } catch (_) {}
   outputAudioContext = new AudioContext({ sampleRate: currentOutputConfig.audioSampleRate });
   await outputAudioContext.resume();
   const destination = outputAudioContext.createMediaStreamDestination();
@@ -1660,6 +1664,16 @@ async function startOutputRecorder() {
   let acceptedEncoderChunks = 0;
   // A static canvas or delayed MediaRecorder timeslice can leave FFmpeg waiting
   // indefinitely on pipe:0. Explicitly flush the first segment and frame.
+  const framePump = window.setInterval(() => {
+    if (outputMediaRecorder !== recorder || !outputActive || recorder.state !== 'recording') {
+      window.clearInterval(framePump); return;
+    }
+    // Periodic refresh guarantees nonempty MediaRecorder output for static
+    // Worship slides even when requestAnimationFrame is throttled.
+    paintScene(liveProgramContext, liveSceneSnapshot || currentScene());
+    try { outputCanvasStream.getVideoTracks()[0]?.requestFrame?.(); } catch (_) {}
+  }, 1000 / Math.max(5, Math.min(30, currentOutputConfig.fps || 30)));
+  recorder.addEventListener('stop', () => window.clearInterval(framePump), {once:true});
   const firstFrameKick = window.setTimeout(() => {
     if (outputMediaRecorder !== recorder || !outputActive || acceptedEncoderChunks) return;
     try { outputCanvasStream.getVideoTracks()[0]?.requestFrame?.(); } catch (_) {}
