@@ -41,8 +41,9 @@ describe('Liturgia Stream output manager', () => {
     await manager.start(createConfig());
     expect(spawnProcess).toHaveBeenCalledWith('ffmpeg.exe', expect.arrayContaining(['-f', 'webm', '-i', 'pipe:0']), expect.any(Object));
     child.emit('spawn');
-    await manager.writeChunk(Buffer.from('webm-data'));
-    expect(child.stdin.write).toHaveBeenCalledWith(Buffer.from('webm-data'), expect.any(Function));
+    const header = Buffer.from('1a45dfa30001', 'hex');
+    await manager.writeChunk(header);
+    expect(child.stdin.write).toHaveBeenCalledWith(header, expect.any(Function));
 
     child.stderr.emit('data', Buffer.from('frame=30\nfps=29.9\nbitrate=6100.0kbits/s\ndrop_frames=0\nprogress=continue\n'));
     expect(states).toContain('awaiting-input');
@@ -74,6 +75,16 @@ describe('Liturgia Stream output manager', () => {
     retryCallback();
     secondChild.emit('spawn');
     expect(states.at(-1).state).toBe('awaiting-input');
+    // Delayed chunks from the previous MediaRecorder must not corrupt the new
+    // ffmpeg process. A fresh EBML header is required before resuming input.
+    expect(await manager.writeChunk(Buffer.from('old-midstream-frame'))).toBe(false);
+    expect(secondChild.stdin.write).not.toHaveBeenCalled();
+    const header = Buffer.from('1a45dfa30002', 'hex');
+    expect(await manager.writeChunk(header)).toBe(true);
+    expect(secondChild.stdin.write).toHaveBeenNthCalledWith(1, header, expect.any(Function));
+    const frame = Buffer.from('later-frame');
+    expect(await manager.writeChunk(frame)).toBe(true);
+    expect(secondChild.stdin.write).toHaveBeenNthCalledWith(2, frame, expect.any(Function));
     await manager.stop();
   });
 

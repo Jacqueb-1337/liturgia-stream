@@ -23,6 +23,8 @@ class StreamOutputManager extends EventEmitter {
     this.stopRequested = false;
     this.lastError = '';
     this.progressBuffer = '';
+    // Every new FFmpeg process must receive a fresh WebM EBML header.
+    this.waitingForHeader = true;
   }
 
   publish(state, detail = {}) {
@@ -72,6 +74,7 @@ class StreamOutputManager extends EventEmitter {
     this.child = child;
     this.lastError = '';
     this.progressBuffer = '';
+    this.waitingForHeader = true;
     let handled = false;
 
     const finish = (error) => {
@@ -135,6 +138,13 @@ class StreamOutputManager extends EventEmitter {
       return Promise.reject(new Error('The stream encoder is reconnecting.'));
     }
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    if (this.waitingForHeader) {
+      // A reconnect can happen while MediaRecorder still emits chunks from
+      // the previous recording. Such midstream chunks have no EBML header and
+      // would immediately crash the replacement FFmpeg input decoder.
+      if (buffer.length < 4 || buffer.readUInt32BE(0) !== 0x1a45dfa3) return Promise.resolve(false);
+      this.waitingForHeader = false;
+    }
     return new Promise((resolve, reject) => {
       child.stdin.write(buffer, (error) => {
         if (error?.code === 'EPIPE' || error?.code === 'ERR_STREAM_DESTROYED') return resolve(false);

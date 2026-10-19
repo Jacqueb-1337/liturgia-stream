@@ -980,6 +980,7 @@ let outputComposedStream = null;
 let outputMediaRecorder = null;
 let outputReconnectPreparation = Promise.resolve();
 let outputPendingWrites = new Set();
+let outputChunkWriteQueue = Promise.resolve();
 let outputStartedAt = 0;
 let outputClockTimer = null;
 let currentOutputConfig = { width: 1920, height: 1080, fps: 30, videoBitrateKbps: 6000, audioBitrateKbps: 160, audioSampleRate: 48000 };
@@ -1030,6 +1031,9 @@ function cleanupOutputCapture() {
 
 async function stopOutputRecorder() {
   const recorder = outputMediaRecorder;
+  // Invalidate this generation synchronously. Old WebM chunks must never be
+  // sent to a replacement FFmpeg process, even during the recorder's stop event.
+  outputMediaRecorder = null;
   if (recorder && recorder.state !== 'inactive') {
     await new Promise((resolve) => {
       recorder.addEventListener('stop', resolve, { once: true });
@@ -1077,14 +1081,22 @@ async function startOutputRecorder() {
   });
   outputMediaRecorder = recorder;
   recorder.ondataavailable = (event) => {
-    if (!event.data || !event.data.size || !outputActive) return;
-    const write = event.data.arrayBuffer()
-      .then((data) => window.liturgiaStream.sendOutputChunk(data))
-      .catch((error) => {
-        if (outputActive && !userStoppingOutput) streamStatusDetail.textContent = error.message;
-      });
+    if (!event.data || !event.data.size || !outputActive || outputMediaRecorder !== recorder) return;
+    // Blob.arrayBuffer() and IPC are asynchronous: serialize them so FFmpeg
+    // always sees the EBML header before any following WebM media chunks.
+    const write = outputChunkWriteQueue.then(async () => {
+      if (!outputActive || outputMediaRecorder !== recorder) return;
+      const data = await event.data.arrayBuffer();
+      if (!outputActive || outputMediaRecorder !== recorder) return;
+      await window.liturgiaStream.sendOutputChunk(data);
+    }).catch((error) => {
+      if (outputActive && !userStoppingOutput && outputMediaRecorder === recorder) {
+        streamStatusDetail.textContent = error.message;
+      }
+    });
+    outputChunkWriteQueue = write;
     outputPendingWrites.add(write);
-    write.finally(() => outputPendingWrites.delete(write));
+    void write.finally(() => outputPendingWrites.delete(write));
   };
   recorder.onerror = (event) => {
     streamStatusDetail.textContent = event.error?.message || 'The local video input stopped.';
