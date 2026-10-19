@@ -1296,25 +1296,27 @@ const destinationEditorForm = document.getElementById('destination-editor-form')
 let editingDestinationId = null;
 let destinations = [];
 const destinationStates = new Map();
+const destinationErrors = new Map();
 let pendingSavedStreamConfig = null;
 
 function destinationState(id) {
   return destinationStates.get(id) || 'offline';
 }
 const facebookConnectionErrors = new Map();
+let facebookPublishRequested = false;
 function isFacebookDestination(item) {
   try { return /(^|\.)facebook\.com$/i.test(new URL(item.server).hostname); }
   catch (_) { return false; }
 }
 function facebookHelpButton(item) {
-  if (!isFacebookDestination(item) || ![1, 2].includes(facebookConnectionErrors.get(item.id))) return null;
+  if (!isFacebookDestination(item) || (![1, 2].includes(facebookConnectionErrors.get(item.id)) && !(facebookPublishRequested && destinationState(item.id) === 'live'))) return null;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'facebook-connection-help';
   button.textContent = '🔗';
   button.title = 'Open Facebook Live Producer to configure streaming software';
   button.setAttribute('aria-label', 'Open Facebook Live Producer for ' + item.name);
-  button.addEventListener('click', () => { void window.liturgiaStream.openFacebookProducer(); });
+  button.addEventListener('click', () => { void window.liturgiaStream.openFacebookProducer(facebookPublishRequested ? 'publish' : 'connect', item.id); });
   return button;
 }
 
@@ -1337,6 +1339,12 @@ function renderDestinationCards() {
       current === 'reconnecting' ? 'Reconnecting · click to disconnect' :
       current === 'connecting' ? 'Connecting · click to disconnect' : 'Click to connect';
     const host = document.createElement('small');
+    if (current === 'reconnecting' && destinationErrors.has(item.id)) {
+      const failure = document.createElement('small');
+      failure.className = 'destination-error-detail';
+      failure.textContent = destinationErrors.get(item.id);
+      open.append(failure);
+    }
     try { host.textContent = new URL(item.server).hostname; } catch (_) { host.textContent = 'RTMP destination'; }
     open.append(name, host, state);
     open.addEventListener('click', () => { void toggleDestination(item.id); });
@@ -1647,16 +1655,26 @@ function renderLiveDestinations() {
     state.textContent = current === 'offline' ? 'Offline' : current === 'live' ? 'Sending video' :
       current === 'reconnecting' ? 'Retrying' : 'Connecting';
     line.append(name, state);
+    if (current === 'reconnecting' && destinationErrors.has(d.id)) {
+      const failure = document.createElement('span');
+      failure.className = 'destination-error-detail';
+      failure.title = destinationErrors.get(d.id);
+      failure.textContent = destinationErrors.get(d.id);
+      line.append(failure);
+    }
     const fbHelp = facebookHelpButton(d);
     if (fbHelp) line.append(fbHelp);
     list.append(line);
   }
+  const facebookPublishButton = document.getElementById('facebook-publish-guide');
+  if (facebookPublishButton) facebookPublishButton.hidden = !destinations.some(d => isFacebookDestination(d) && destinationState(d.id) === 'live');
   const anyActive = destinations.some(d => destinationState(d.id) !== 'offline');
   const allActive = destinations.length > 0 && destinations.every(d => destinationState(d.id) !== 'offline');
   goLiveButton.textContent = allActive ? 'Stop all outputs' :
     anyActive ? 'Connect remaining & start all' : 'Connect & start all';
 }
 async function toggleDestination(id) {
+  facebookPublishRequested = false;
   const item = destinations.find(d => d.id === id);
   if (!item) return;
   if (destinationState(id) !== 'offline') {
@@ -1689,8 +1707,14 @@ window.liturgiaStream.onFacebookHelp(id => {
     '. Check the connection details and stream key. Producer can help confirm whether Facebook is receiving video. Only press Go Live after a preview appears.';
   document.getElementById('facebook-producer-help').hidden = false;
 });
+document.getElementById('facebook-publish-guide').addEventListener('click', () => {
+  facebookPublishRequested = true;
+  renderDestinationCards();
+  streamStatusDetail.textContent = 'Facebook is receiving video. Click the pulsing link next to Facebook to open Producer and publish.';
+});
 document.getElementById('facebook-producer-help').addEventListener('click', () => {
-  void window.liturgiaStream.openFacebookProducer();
+  const source = destinations.find(d => isFacebookDestination(d) && destinationState(d.id) === 'reconnecting') || destinations.find(isFacebookDestination);
+  void window.liturgiaStream.openFacebookProducer(facebookPublishRequested ? 'publish' : 'connect', source?.id);
 });
 document.getElementById('apply-scene-live').addEventListener('click', () => {
   if (!outputActive || !sceneChangesPending) return;
@@ -1700,6 +1724,8 @@ document.getElementById('apply-scene-live').addEventListener('click', () => {
 
 async function handleOutputStatus(status) {
   if (status.sourceId) {
+    if (status.state === 'reconnecting') destinationErrors.set(status.sourceId, String(status.error || 'Connection interrupted.').replace(/rtmps?:\/\/\S+/gi, '[stream destination]').slice(0, 180));
+    if (status.state === 'live' || status.state === 'stopped') destinationErrors.delete(status.sourceId);
     const fbDestination = destinations.find(d => d.id === status.sourceId);
     if (fbDestination && isFacebookDestination(fbDestination)) {
       if (status.state === 'reconnecting' && status.error) {
@@ -1877,6 +1903,7 @@ applyLiveSettingsButton.addEventListener('click', async () => {
 });
 
 goLiveButton.addEventListener('click', async () => {
+  facebookPublishRequested = true;
   if (applyingStreamSettings) return;
   const remaining = destinations.filter(d => destinationState(d.id) === 'offline');
   if (!remaining.length && outputActive) {

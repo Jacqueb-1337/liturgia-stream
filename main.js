@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, session, safeStorage, dialog } = require('e
 const { createSettingsStore } = require('./settingsStore');
 const { executableCandidates, probeFirstAvailable, buildRtmpUrl } = require('./ffmpegRuntime');
 const { MultiOutputManager } = require('./multiOutputManager');
-const { openFacebookProducer } = require('./facebookProducer');
+const { openFacebookProducer, updateFacebookProducer, getActiveSourceId } = require('./facebookProducerController');
 const { createUpdateService } = require('./updateService');
 const { autoUpdater } = require('electron-updater');
 
@@ -208,13 +208,14 @@ app.whenReady().then(() => {
   ipcMain.handle('stream:update:release', () => require('electron').shell.openExternal('https://github.com/Jacqueb-1337/liturgia-stream/releases/latest'));
   outputManager.on('status', (status) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:output:status', status);
+    updateFacebookProducer(status);
     if (status.state === 'reconnecting' && status.sourceId &&
         /facebook\.com/i.test(targetServerById.get(status.sourceId) || '') &&
         /error opening output|io error|end of file|closed|rejected|failed/i.test(status.error || '')) {
       const last = facebookPromptedAt.get(status.sourceId) || 0;
       if (Date.now() - last > 10 * 60 * 1000) {
         facebookPromptedAt.set(status.sourceId, Date.now());
-        openFacebookProducer(mainWindow);
+        // Never open Producer automatically; the renderer displays a user-activated link.
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:facebook:help', status.sourceId);
       }
     }
@@ -231,7 +232,6 @@ app.whenReady().then(() => {
       return { id, name, outputUrl: buildRtmpUrl(server, streamKey) };
     });
     const starting = outputManager.start({ runtime, output: config.output, destinations: mapped });
-    if (destinations.some(({ server }) => /facebook\.com/i.test(server || ''))) openFacebookProducer(mainWindow);
     return starting;
   });
   ipcMain.handle('stream:output:chunk', (_event, data) => outputManager.writeChunk(data));
@@ -243,7 +243,35 @@ app.whenReady().then(() => {
     return settingsStore.deleteDestination(id);
   });
   ipcMain.handle('stream:quality:save', (_event, output) => settingsStore.saveOutput(output));
-  ipcMain.handle('stream:facebook:open', () => { openFacebookProducer(mainWindow); return true; });
+  ipcMain.handle('stream:facebook:open', (_event, mode = 'connect', sourceId = null) => {
+    openFacebookProducer(mainWindow, { mode, sourceId });
+    return true;
+  });
+  ipcMain.handle('stream:facebook:use-clipboard-key', async () => {
+    const { dialog } = require('electron');
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: 'question', buttons: ['Cancel', 'Use copied key'], defaultId: 0, cancelId: 0,
+      title: 'Update Facebook stream key',
+      message: 'Replace the saved Facebook stream key with the current clipboard text?',
+      detail: 'Only continue after explicitly copying the key in Facebook Producer. Liturgia will encrypt the key and retry this destination.'
+    });
+    if (choice.response !== 1) throw new Error('Stream key import cancelled.');
+    const id = getActiveSourceId();
+    if (!id) throw new Error('No Facebook destination is selected.');
+    const { clipboard } = require('electron');
+    const key = clipboard.readText().trim();
+    if (key.length < 12 || key.length > 1024 || /\s/.test(key) || /^https?:/i.test(key))
+      throw new Error('Copy the stream key from Facebook Producer before selecting this button.');
+    const config = await settingsStore.load();
+    const dest = config.destinations.find(d => d.id === id);
+    if (!dest) throw new Error('Facebook destination is unavailable.');
+    await settingsStore.saveDestination({ id, name: dest.name, server: dest.server, streamKey: key });
+    await outputManager.stop(id);
+    const credentials = await settingsStore.getDestinationCredentialsByIds([id]);
+    const runtime = await getEncoderInfo();
+    const mapped = credentials.map(d => ({id:d.id,name:d.name,outputUrl:buildRtmpUrl(d.server,d.streamKey)}));
+    return outputManager.start({runtime,output:config.output,destinations:mapped});
+  });
   ipcMain.handle('stream:encoder:info', async () => {
     const info = await getEncoderInfo();
     return {

@@ -259,6 +259,8 @@ body:has(#page-scenes.active) main {
 .facebook-connection-help:hover { background:#55401d; }
 .live-target-row { display:flex; align-items:center; gap:8px; }
 .live-target-row .facebook-connection-help { margin-left:auto; }
+.destination-error-detail {display:block;color:#f1a6a6;font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.live-target-row .destination-error-detail {max-width:220px;}
 .properties-heading {
   margin: 15px 0 3px;
   padding-top: 10px;

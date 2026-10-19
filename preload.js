@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('liturgiaStream', {
   saveDestination: (item) => ipcRenderer.invoke('stream:destination:save', item),
   deleteDestination: (id) => ipcRenderer.invoke('stream:destination:delete', id),
   saveQuality: (output) => ipcRenderer.invoke('stream:quality:save', output),
-  openFacebookProducer: () => ipcRenderer.invoke('stream:facebook:open'),
+  openFacebookProducer: (mode, sourceId) => ipcRenderer.invoke('stream:facebook:open', mode, sourceId),
   sendOutputChunk: (data) => ipcRenderer.invoke('stream:output:chunk', data),
   stopOutput: (id) => ipcRenderer.invoke('stream:output:stop', id),
   onFacebookHelp: (callback) => {
