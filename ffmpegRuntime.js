@@ -69,7 +69,9 @@ function buildRtmpUrl(server, streamKey) {
   }
   const key = String(streamKey || '').trim();
   if (!key) throw new Error('Enter a stream key.');
-  value.pathname = value.pathname.replace(/\/+$/, '') + '/' + encodeURIComponent(key);
+  const question = key.indexOf('?');
+  value.pathname = value.pathname.replace(/\/+$/, '') + '/' + encodeURIComponent(question >= 0 ? key.slice(0, question) : key);
+  if (question >= 0) value.search = key.slice(question);
   return value.toString();
 }
 
@@ -119,7 +121,7 @@ function buildWebmOutputArgs(options = {}) {
     throw new Error('Output resolution, frame rate, and bitrates must be positive numbers.');
   }
   const args = [
-    '-hide_banner', '-loglevel', 'warning',
+    '-hide_banner', '-loglevel', 'verbose',
     '-progress', 'pipe:2', '-stats_period', '1',
     '-fflags', '+genpts', '-thread_queue_size', '512',
     '-f', 'webm', '-i', 'pipe:0',

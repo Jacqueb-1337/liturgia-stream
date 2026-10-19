@@ -68,6 +68,8 @@ describe('Liturgia Stream FFmpeg runtime', () => {
   test('builds RTMP and RTMPS destinations safely', () => {
     expect(buildRtmpUrl('rtmps://stream.example/live/', 'abc/key')).toBe('rtmps://stream.example/live/abc%2Fkey');
     expect(buildRtmpUrl('rtmp://stream.example/live', 'abc123')).toBe('rtmp://stream.example/live/abc123');
+    expect(buildRtmpUrl('rtmps://live-api-s.facebook.com:443/rtmp/', 'FB-example?s_bl=1&s_psm=1&a=abc'))
+      .toBe('rtmps://live-api-s.facebook.com:443/rtmp/FB-example?s_bl=1&s_psm=1&a=abc');
     expect(() => buildRtmpUrl('https://stream.example/live', 'abc')).toThrow();
     expect(() => buildRtmpUrl('rtmps://user@stream.example/live', 'abc')).toThrow();
     expect(() => buildRtmpUrl('rtmps://stream.example/live?token=x', 'abc')).toThrow();
