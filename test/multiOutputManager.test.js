@@ -62,6 +62,20 @@ describe('shared local encoder with independent RTMP publishers',()=>{
     await manager.stop();
   });
 
+  test('buffers WebM EBML header fragmented across MediaRecorder chunks',async()=>{
+    const children=[];
+    const manager=new MultiOutputManager({spawnProcess:()=>{const c=fakeProcess();children.push(c);return c}});
+    await manager.start(config([one]));
+    expect(await manager.writeChunk(Buffer.from('1a','hex'))).toBe(true);
+    expect(children[0].stdin.write).not.toHaveBeenCalled();
+    expect(await manager.writeChunk(Buffer.from('45dfa39f4286','hex'))).toBe(true);
+    expect(children[0].stdin.write).toHaveBeenCalledTimes(1);
+    expect(children[0].stdin.write.mock.calls[0][0].toString('hex')).toBe('1a45dfa39f4286');
+    expect(await manager.writeChunk(Buffer.from('001122','hex'))).toBe(true);
+    expect(children[0].stdin.write).toHaveBeenCalledTimes(2);
+    await manager.stop();
+  });
+
   test('uses MPEGTS only between encoder and copy-only publishers',()=>{
     const args=buildSharedEncoderArgs(config([]).output,'libx264');
     expect(args.slice(-1)).toEqual(['pipe:1']);

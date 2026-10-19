@@ -88,6 +88,8 @@ class MultiOutputManager extends EventEmitter {
     const runtime = this.config.runtime;
     const args = buildSharedEncoderArgs(this.config.output, this.currentEncoder.id);
     this.waitingForHeader = true;
+    this.pendingHeaderChunks = [];
+    this.pendingHeaderBytes = 0;
     this.progressBuffer = '';
     this.emitStatus('connecting', { message: 'Starting the shared encoder…' });
     const child = this.spawnProcess(runtime.executablePath, args, {
@@ -233,12 +235,28 @@ class MultiOutputManager extends EventEmitter {
     const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
     this.inputBytes = (this.inputBytes || 0) + chunk.length;
     if (Date.now()-(this.lastInputDiagnostic || 0)>3000) {this.lastInputDiagnostic=Date.now();this.diagnostic('encoder-input',{chunkBytes:chunk.length,totalBytes:this.inputBytes,waitingForHeader:this.waitingForHeader,encoderWritableLength:input.writableLength});}
+    let payload = chunk;
     if (this.waitingForHeader) {
-      if (chunk.length < 4 || chunk.readUInt32BE(0) !== EBML_HEADER) return Promise.resolve(false);
+      this.pendingHeaderChunks.push(chunk);
+      this.pendingHeaderBytes += chunk.length;
+      // Chromium may emit a one-byte first WebM chunk. Do not discard it:
+      // the remaining EBML magic bytes arrive in the next MediaRecorder blob.
+      if (this.pendingHeaderBytes < 4) {
+        this.diagnostic('webm-header-fragment',{receivedBytes:this.pendingHeaderBytes});
+        return Promise.resolve(true);
+      }
+      payload = Buffer.concat(this.pendingHeaderChunks, this.pendingHeaderBytes);
+      this.pendingHeaderChunks = [];
+      this.pendingHeaderBytes = 0;
+      if (payload.readUInt32BE(0) !== EBML_HEADER) {
+        this.diagnostic('invalid-webm-header',{bytes:payload.length,first16:payload.subarray(0,16).toString('hex')});
+        return Promise.resolve(false);
+      }
       this.waitingForHeader = false;
+      this.diagnostic('webm-header-accepted',{bytes:payload.length,first16:payload.subarray(0,4).toString('hex')});
     }
     return new Promise((resolve, reject) => {
-      input.write(chunk, err => {
+      input.write(payload, err => {
         if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return resolve(false);
         return err ? reject(err) : resolve(true);
       });
