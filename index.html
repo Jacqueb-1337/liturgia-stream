@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Liturgia Stream</title>
+  <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
     <div class="header-actions">
       <div class="update-anchor">
         <button id="update-toggle" class="update-toggle" type="button" aria-label="Check for Liturgia Stream updates" aria-expanded="false" aria-controls="update-popover" title="Updates">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.6 6"/><path d="M20 4v7h-7"/></svg>
+          <i class="fa-solid fa-cloud-arrow-down" aria-hidden="true"></i>
           <span id="update-indicator" class="update-indicator" hidden></span>
         </button>
         <section id="update-popover" class="update-popover" aria-labelledby="update-title" hidden>
@@ -85,7 +86,7 @@
       </div>
       <div class="scene-workspace">
         <aside class="scene-dock">
-          <div class="dock-heading"><span>SCENES</span><button class="dock-add" id="create-custom-scene" title="Add scene" aria-label="Add scene">+</button></div>
+          <div class="dock-heading"><span>SCENES</span><button class="dock-add" id="create-custom-scene" title="Add scene" aria-label="Add scene"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
           <div id="scene-list" class="scene-list"></div>
           <p id="scene-message" class="helper" role="status">Choose a scene. Select devices on the Video Devices and Audio Devices tabs.</p>
         </aside>
@@ -94,7 +95,7 @@
           <div class="editor-toolbar">
             <label for="custom-scene-name">Scene</label>
             <input id="custom-scene-name" maxlength="48">
-            <button class="button secondary" id="remove-custom-scene">Delete scene</button>
+            <button class="button secondary" id="remove-custom-scene"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Delete scene</button>
           </div>
           <div class="editor-layout">
             <div class="editor-preview-panel">
@@ -123,14 +124,14 @@
                   <option value="image">Image</option>
                   <option value="text">Text</option>
                 </select>
-                <button class="button primary" id="add-layer">Add</button>
+                <button class="button primary" id="add-layer"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add</button>
               </div>
 
               <div id="layer-properties" hidden>
                 <div class="properties-heading">SOURCE PROPERTIES</div>
                 <label for="layer-name">Name</label><input id="layer-name" maxlength="48">
                 <label for="layer-text" id="layer-text-label" hidden>Text</label><textarea id="layer-text" rows="3" maxlength="2000" hidden></textarea>
-                <button class="button secondary" id="choose-layer-image" hidden>Choose image…</button>
+                <button class="button secondary" id="choose-layer-image" hidden><i class="fa-solid fa-image" aria-hidden="true"></i> Choose image…</button>
 
                 <div class="editor-fields transform-fields">
                   <label>X <input data-layer-field="x" type="number" step="1"></label>
@@ -150,10 +151,10 @@
                 </div>
 
                 <div class="layer-actions">
-                  <button class="button secondary" id="layer-fit">Fit canvas</button>
-                  <button class="button secondary" id="layer-center">Center</button>
-                  <button class="button secondary" id="layer-duplicate">Duplicate</button>
-                  <button class="button secondary" id="layer-remove">Remove source</button>
+                  <button class="button secondary" id="layer-fit"><i class="fa-solid fa-expand" aria-hidden="true"></i> Fit canvas</button>
+                  <button class="button secondary" id="layer-center"><i class="fa-solid fa-arrows-to-dot" aria-hidden="true"></i> Center</button>
+                  <button class="button secondary" id="layer-duplicate"><i class="fa-solid fa-copy" aria-hidden="true"></i> Duplicate</button>
+                  <button class="button secondary" id="layer-remove"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Remove source</button>
                 </div>
 
                 <h2 id="layer-appearance-heading" hidden>Source appearance</h2>

@@ -14,7 +14,7 @@ describe('reusable Worship display profile workflow',()=>{
   });
   test('dedicated edit button uses Worship’s original safe area styling popover',()=>{
     expect(index).toContain('id="program-style-frame"');
-    expect(renderer).toContain("control('✎', 'Edit Worship display styles and layout'");
+    expect(renderer).toContain("control('fa-solid fa-pen-to-square', 'Edit Worship display styles and layout'");
     expect(editor).toContain('function initSafeAreaDrag()');
     expect(editor).toContain("document.getElementById('safe-area-box')");
     expect(editor).toContain("window.parent.postMessage({type:'liturgia-program-style-save'");

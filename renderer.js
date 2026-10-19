@@ -736,7 +736,10 @@ function renderCustomEditor() {
     const control = (caption, title, callback) => {
       const button = document.createElement('button');
       button.className = 'button secondary';
-      button.textContent = caption;
+      const icon = document.createElement('i');
+      icon.className = caption;
+      icon.setAttribute('aria-hidden', 'true');
+      button.append(icon);
       button.title = title;
       button.setAttribute('aria-label', `${title} ${layer.name}`);
       button.onclick = callback;
@@ -744,21 +747,21 @@ function renderCustomEditor() {
     };
     row.append(select);
     if (layer.type === 'program') {
-      control('✎', 'Edit Worship display styles and layout', () => { void editProgramLayer(layer.id); });
-      control('⚙', 'Configure source when Worship disconnects', () => editOfflineProgramLayer(layer.id));
+      control('fa-solid fa-pen-to-square', 'Edit Worship display styles and layout', () => { void editProgramLayer(layer.id); });
+      control('fa-solid fa-gear', 'Configure source when Worship disconnects', () => editOfflineProgramLayer(layer.id));
     }
-    control(layer.visible ? '◉' : '○', layer.visible ? 'Hide source' : 'Show source', () => {
+    control(layer.visible ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash', layer.visible ? 'Hide source' : 'Show source', () => {
       layer.visible = !layer.visible; renderCustomEditor(); applyScene(); persistScenes();
     });
-    control(layer.locked ? '🔒' : '◇', 'Lock or unlock', () => {
+    control(layer.locked ? 'fa-solid fa-lock' : 'fa-solid fa-lock-open', 'Lock or unlock', () => {
       layer.locked = !layer.locked; renderCustomEditor(); persistScenes();
     });
-    control('↑', 'Move forward', () => {
+    control('fa-solid fa-arrow-up', 'Move forward', () => {
       if (index === scene.layers.length - 1) return;
       [scene.layers[index], scene.layers[index + 1]] = [scene.layers[index + 1], scene.layers[index]];
       renderCustomEditor(); persistScenes();
     });
-    control('↓', 'Move backward', () => {
+    control('fa-solid fa-arrow-down', 'Move backward', () => {
       if (index === 0) return;
       [scene.layers[index], scene.layers[index - 1]] = [scene.layers[index - 1], scene.layers[index]];
       renderCustomEditor(); persistScenes();
@@ -1312,12 +1315,14 @@ async function refreshFacebookSessions() {
   renderDestinationCards();
 }
 const facebookConnectionTimers = new Map();
+const facebookConnectionStartedAt = new Map();
 function clearFacebookConnectionTimer(id) {
   const timer = facebookConnectionTimers.get(id);
   if (timer) clearTimeout(timer);
   facebookConnectionTimers.delete(id);
 }
 function scheduleFacebookConnectionHelp(id) {
+  if (!facebookConnectionStartedAt.has(id)) facebookConnectionStartedAt.set(id, Date.now());
   clearFacebookConnectionTimer(id);
   facebookConnectionTimers.set(id, setTimeout(() => {
     facebookConnectionTimers.delete(id);
@@ -1330,15 +1335,26 @@ function scheduleFacebookConnectionHelp(id) {
 }
 let facebookPublishRequested = false;
 function isFacebookDestination(item) {
-  try { return /(^|\.)facebook\.com$/i.test(new URL(item.server).hostname); }
+  if (!item) return false;
+  // User-provided labels and standard Meta ingest hostnames must both work.
+  if (/facebook|meta live/i.test(String(item.name || ''))) return true;
+  try { return /(^|\.)(facebook\.com|fbcdn\.net)$/i.test(new URL(item.server).hostname); }
   catch (_) { return false; }
 }
 function facebookHelpButton(item) {
-  if (!isFacebookDestination(item) || (facebookSessionValid.get(item.id) === true && !facebookPublishRequested && ![1, 2].includes(facebookConnectionErrors.get(item.id)))) return null;
+  if (!isFacebookDestination(item)) return null;
+  const current = destinationState(item.id);
+  const needsHelp = facebookSessionValid.get(item.id) !== true ||
+    facebookPublishRequested || facebookConnectionErrors.has(item.id) ||
+    current === 'reconnecting' || (current === 'connecting' && facebookConnectionStartedAt.has(item.id) && Date.now() - facebookConnectionStartedAt.get(item.id) >= 10000);
+  if (!needsHelp) return null;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'facebook-connection-help';
-  button.textContent = '🔗';
+  const linkIcon = document.createElement('i');
+  linkIcon.className = 'fa-solid fa-link';
+  linkIcon.setAttribute('aria-hidden', 'true');
+  button.append(linkIcon);
   button.title = 'Open Facebook Live Producer to configure streaming software';
   button.setAttribute('aria-label', 'Open Facebook Live Producer for ' + item.name);
   button.addEventListener('click', () => { void window.liturgiaStream.openFacebookProducer(facebookPublishRequested ? 'publish' : 'connect', item.id); });
@@ -1376,11 +1392,11 @@ function renderDestinationCards() {
     const actions = document.createElement('div');
     actions.className = 'destination-tile-actions';
     const edit = document.createElement('button');
-    edit.type = 'button'; edit.textContent = '✎'; edit.title = 'Edit ' + item.name;
+    edit.type = 'button'; edit.innerHTML = '<i class="fa-solid fa-pen" aria-hidden="true"></i>'; edit.title = 'Edit ' + item.name;
     edit.setAttribute('aria-label', 'Edit ' + item.name);
     edit.addEventListener('click', () => openDestinationEditor(item.id));
     const remove = document.createElement('button');
-    remove.type = 'button'; remove.textContent = '×'; remove.title = 'Delete ' + item.name;
+    remove.type = 'button'; remove.innerHTML = '<i class="fa-solid fa-trash-can" aria-hidden="true"></i>'; remove.title = 'Delete ' + item.name;
     remove.className = 'destination-tile-trash';
     remove.setAttribute('aria-label', 'Delete ' + item.name);
     remove.addEventListener('click', () => { void deleteDestination(item.id); });
@@ -1750,7 +1766,10 @@ document.getElementById('apply-scene-live').addEventListener('click', () => {
 
 async function handleOutputStatus(status) {
   if (status.sourceId) {
-    if (status.state === 'stopped') clearFacebookConnectionTimer(status.sourceId);
+    if (status.state === 'stopped' || status.state === 'live') {
+      clearFacebookConnectionTimer(status.sourceId);
+      facebookConnectionStartedAt.delete(status.sourceId);
+    }
     if (status.state === 'reconnecting') destinationErrors.set(status.sourceId, String(status.error || 'Connection interrupted.').replace(/rtmps?:\/\/\S+/gi, '[stream destination]').slice(0, 180));
     if (status.state === 'live' || status.state === 'stopped') destinationErrors.delete(status.sourceId);
     const fbDestination = destinations.find(d => d.id === status.sourceId);
@@ -1934,6 +1953,7 @@ applyLiveSettingsButton.addEventListener('click', async () => {
 
 goLiveButton.addEventListener('click', async () => {
   facebookPublishRequested = true;
+  renderDestinationCards();
   if (applyingStreamSettings) return;
   const remaining = destinations.filter(d => destinationState(d.id) === 'offline');
   if (!remaining.length && outputActive) {
