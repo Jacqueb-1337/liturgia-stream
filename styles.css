@@ -254,6 +254,11 @@ body:has(#page-scenes.active) main {
   font: 700 16px/1 "Segoe UI", sans-serif;
 }
 .dock-add:hover { background: #363c3e; border-color: #596164; }
+@keyframes facebook-help-pulse { 0%,100% {box-shadow:0 0 0 0 #f6bd4f99;} 50% {box-shadow:0 0 0 5px #f6bd4f00;} }
+.facebook-connection-help { flex:0 0 auto; min-width:30px; min-height:30px; border:1px solid #d9a543; background:#382e1d; color:#ffda87; border-radius:7px; cursor:pointer; animation:facebook-help-pulse 1.2s ease-in-out infinite; }
+.facebook-connection-help:hover { background:#55401d; }
+.live-target-row { display:flex; align-items:center; gap:8px; }
+.live-target-row .facebook-connection-help { margin-left:auto; }
 .properties-heading {
   margin: 15px 0 3px;
   padding-top: 10px;
@@ -301,8 +306,15 @@ body:has(#page-scenes.active) main {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 #page-scenes .scene-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
+/* Keep titles inside their own scene cards rather than overlapping adjacent thumbnails. */
+#page-scenes .scene-card { flex-shrink: 0; overflow: hidden; }
 #page-scenes .scene-sources {
   width: 100%;
   color: #899195;

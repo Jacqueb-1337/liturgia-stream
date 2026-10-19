@@ -1301,6 +1301,22 @@ let pendingSavedStreamConfig = null;
 function destinationState(id) {
   return destinationStates.get(id) || 'offline';
 }
+const facebookConnectionErrors = new Map();
+function isFacebookDestination(item) {
+  try { return /(^|\.)facebook\.com$/i.test(new URL(item.server).hostname); }
+  catch (_) { return false; }
+}
+function facebookHelpButton(item) {
+  if (!isFacebookDestination(item) || ![1, 2].includes(facebookConnectionErrors.get(item.id))) return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'facebook-connection-help';
+  button.textContent = '🔗';
+  button.title = 'Open Facebook Live Producer to configure streaming software';
+  button.setAttribute('aria-label', 'Open Facebook Live Producer for ' + item.name);
+  button.addEventListener('click', () => { void window.liturgiaStream.openFacebookProducer(); });
+  return button;
+}
 
 function renderDestinationCards() {
   destinationGrid.replaceChildren();
@@ -1335,6 +1351,8 @@ function renderDestinationCards() {
     remove.className = 'destination-tile-trash';
     remove.setAttribute('aria-label', 'Delete ' + item.name);
     remove.addEventListener('click', () => { void deleteDestination(item.id); });
+    const fbHelp = facebookHelpButton(item);
+    if (fbHelp) actions.append(fbHelp);
     actions.append(edit, remove);
     tile.append(open, actions);
     destinationGrid.append(tile);
@@ -1626,9 +1644,11 @@ function renderLiveDestinations() {
     const state = document.createElement('span');
     state.className = 'destination-state destination-state-' + destinationState(d.id);
     const current = destinationState(d.id);
-    state.textContent = current === 'offline' ? 'Offline' : current === 'live' ? 'Live feed' :
+    state.textContent = current === 'offline' ? 'Offline' : current === 'live' ? 'Sending video' :
       current === 'reconnecting' ? 'Retrying' : 'Connecting';
     line.append(name, state);
+    const fbHelp = facebookHelpButton(d);
+    if (fbHelp) line.append(fbHelp);
     list.append(line);
   }
   const anyActive = destinations.some(d => destinationState(d.id) !== 'offline');
@@ -1665,8 +1685,8 @@ async function toggleDestination(id) {
 window.liturgiaStream.onFacebookHelp(id => {
   const d = destinations.find(x => x.id === id);
   if (!d) return;
-  streamStatusDetail.textContent = 'Facebook declined ' + d.name +
-    '. Live Producer is open. Complete setup, then click Go Live after checking the preview.';
+  streamStatusDetail.textContent = 'Facebook RTMP connection failed for ' + d.name +
+    '. Check the connection details and stream key. Producer can help confirm whether Facebook is receiving video. Only press Go Live after a preview appears.';
   document.getElementById('facebook-producer-help').hidden = false;
 });
 document.getElementById('facebook-producer-help').addEventListener('click', () => {
@@ -1680,6 +1700,14 @@ document.getElementById('apply-scene-live').addEventListener('click', () => {
 
 async function handleOutputStatus(status) {
   if (status.sourceId) {
+    const fbDestination = destinations.find(d => d.id === status.sourceId);
+    if (fbDestination && isFacebookDestination(fbDestination)) {
+      if (status.state === 'reconnecting' && status.error) {
+        facebookConnectionErrors.set(status.sourceId, Math.min(2, (facebookConnectionErrors.get(status.sourceId) || 0) + 1));
+      } else if (status.state === 'live') {
+        facebookConnectionErrors.delete(status.sourceId);
+      }
+    }
     destinationStates.set(status.sourceId, status.state === 'stopped' ? 'offline' : status.state);
     renderDestinationCards();
     if (status.state === 'live') {

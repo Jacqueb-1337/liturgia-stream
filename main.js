@@ -230,7 +230,9 @@ app.whenReady().then(() => {
       targetServerById.set(id, server);
       return { id, name, outputUrl: buildRtmpUrl(server, streamKey) };
     });
-    return outputManager.start({ runtime, output: config.output, destinations: mapped });
+    const starting = outputManager.start({ runtime, output: config.output, destinations: mapped });
+    if (destinations.some(({ server }) => /facebook\.com/i.test(server || ''))) openFacebookProducer(mainWindow);
+    return starting;
   });
   ipcMain.handle('stream:output:chunk', (_event, data) => outputManager.writeChunk(data));
   ipcMain.handle('stream:output:stop', (_event, id = null) => outputManager.stop(id));
