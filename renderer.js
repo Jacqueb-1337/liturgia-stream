@@ -1657,6 +1657,21 @@ async function startOutputRecorder() {
     audioBitsPerSecond: currentOutputConfig.audioBitrateKbps * 1000
   });
   outputMediaRecorder = recorder;
+  let acceptedEncoderChunks = 0;
+  // A static canvas or delayed MediaRecorder timeslice can leave FFmpeg waiting
+  // indefinitely on pipe:0. Explicitly flush the first segment and frame.
+  const firstFrameKick = window.setTimeout(() => {
+    if (outputMediaRecorder !== recorder || !outputActive || acceptedEncoderChunks) return;
+    try { outputCanvasStream.getVideoTracks()[0]?.requestFrame?.(); } catch (_) {}
+    try { if (recorder.state === 'recording') recorder.requestData(); } catch (_) {}
+  }, 4500);
+  recorder.addEventListener('stop', () => window.clearTimeout(firstFrameKick), {once:true});
+  const inputWatchdog = window.setTimeout(() => {
+    if (outputMediaRecorder === recorder && outputActive && acceptedEncoderChunks === 0) {
+      streamStatusDetail.textContent = 'Encoder is still waiting for video/audio input; no media chunks have been accepted. Check the active scene, capture tracks, and recording pipeline. This is not necessarily a Facebook stream-key error.';
+    }
+  }, 12000);
+  recorder.addEventListener('stop', () => window.clearTimeout(inputWatchdog), {once:true});
   recorder.ondataavailable = (event) => {
     if (!event.data || !event.data.size || !outputActive || outputMediaRecorder !== recorder) return;
     // Blob.arrayBuffer() and IPC are asynchronous: serialize them so FFmpeg
@@ -1665,7 +1680,7 @@ async function startOutputRecorder() {
       if (!outputActive || outputMediaRecorder !== recorder) return;
       const data = await event.data.arrayBuffer();
       if (!outputActive || outputMediaRecorder !== recorder) return;
-      await window.liturgiaStream.sendOutputChunk(data);
+      if (await window.liturgiaStream.sendOutputChunk(data)) acceptedEncoderChunks++;
     }).catch((error) => {
       if (outputActive && !userStoppingOutput && outputMediaRecorder === recorder) {
         streamStatusDetail.textContent = error.message;

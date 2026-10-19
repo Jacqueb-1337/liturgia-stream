@@ -248,21 +248,17 @@ app.whenReady().then(() => {
     openFacebookProducer(mainWindow, { mode, sourceId });
     return true;
   });
-  ipcMain.handle('stream:facebook:use-clipboard-key', async () => {
-    const { dialog } = require('electron');
-    const choice = await dialog.showMessageBox(mainWindow, {
-      type: 'question', buttons: ['Cancel', 'Use copied key'], defaultId: 0, cancelId: 0,
-      title: 'Update Facebook stream key',
-      message: 'Replace the saved Facebook stream key with the current clipboard text?',
-      detail: 'Only continue after explicitly copying the key in Facebook Producer. Liturgia will encrypt the key and retry this destination.'
-    });
-    if (choice.response !== 1) throw new Error('Stream key import cancelled.');
+  ipcMain.handle('stream:facebook:cancel', async () => {
+    const id=getActiveSourceId();
+    if (id) await outputManager.stop(id);
+    return true;
+  });
+  ipcMain.handle('stream:facebook:use-key', async (_event, suppliedKey) => {
     const id = getActiveSourceId();
     if (!id) throw new Error('No Facebook destination is selected.');
-    const { clipboard } = require('electron');
-    const key = clipboard.readText().trim();
+    const key = String(suppliedKey || '').trim();
     if (key.length < 12 || key.length > 1024 || /\s/.test(key) || /^https?:/i.test(key))
-      throw new Error('Copy the stream key from Facebook Producer before selecting this button.');
+      throw new Error('Enter a valid stream key or choose the key shown in Facebook Producer.');
     const config = await settingsStore.load();
     const dest = config.destinations.find(d => d.id === id);
     if (!dest) throw new Error('Facebook destination is unavailable.');

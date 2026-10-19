@@ -15,10 +15,11 @@ test('connection helper does not automatically publish and distinguishes publish
   expect(controller).toContain("if(activeMode==='connect'){popup.close();return;}");
   expect(controller).toContain('recordUrl(url)');
 });
-test('stream key recovery only reads the clipboard after explicit native confirmation',()=>{
+test('stream key recovery uses an explicitly selected key without accessing the clipboard',()=>{
   const main=src('main.js');
-  const handler=main.slice(main.indexOf("ipcMain.handle('stream:facebook:use-clipboard-key'"));
-  expect(handler.indexOf('showMessageBox')).toBeLessThan(handler.indexOf('clipboard.readText()'));
-  expect(handler).toContain("choice.response !== 1");
+  const handler=main.slice(main.indexOf("ipcMain.handle('stream:facebook:use-key'"),main.indexOf("ipcMain.handle('stream:encoder:info'"));
+  expect(handler).toContain('String(suppliedKey');
+  expect(handler).not.toContain('clipboard.readText');
   expect(handler).toContain('settingsStore.saveDestination');
+  expect(handler).toContain('outputManager.stop(id)');
 });
