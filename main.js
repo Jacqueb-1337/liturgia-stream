@@ -192,6 +192,18 @@ function createWindow() {
 app.whenReady().then(() => {
   settingsStore = createSettingsStore(app.getPath('userData'), safeStorage);
   outputManager = new MultiOutputManager();
+  const diagnosticLog = (category, details = {}) => {
+    const safe = JSON.parse(JSON.stringify(details, (key, value) => {
+      if (/key|token|secret|password|outputUrl/i.test(key)) return '[REDACTED]';
+      if (typeof value === 'string') return value.replace(/rtmps?:\/\/\S+/gi, '[stream destination]').replace(/FB-[\w?&=%.-]+/gi, '[stream key]');
+      return value;
+    }));
+    const event = { timestamp: new Date().toISOString(), category, ...safe };
+    console.log('[Stream diagnostics]', event);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:diagnostics', event);
+  };
+  outputManager.on('diagnostic', ({category, ...details}) => diagnosticLog(category, details));
+  ipcMain.handle('stream:diagnostic', (_event, category, details) => diagnosticLog('renderer:' + String(category).slice(0,80), details));
   updateService = createUpdateService({
     updater: autoUpdater,
     app,

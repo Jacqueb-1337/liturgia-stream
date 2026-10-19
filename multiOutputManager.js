@@ -54,7 +54,10 @@ class MultiOutputManager extends EventEmitter {
     this.progressBuffer = '';
   }
 
+  diagnostic(category, details = {}) { this.emit('diagnostic', { category, ...details }); }
+
   emitStatus(state, details = {}) {
+    this.diagnostic('state', {state, ...details});
     if (!details.sourceId) this.state = state;
     this.emit('status', { state, ...details });
   }
@@ -91,9 +94,13 @@ class MultiOutputManager extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true
     });
     this.encoder = child;
-    child.stdin?.on('error', () => {});
+    this.diagnostic('encoder-spawn', {pid:child.pid,encoder:this.currentEncoder.id,argumentCount:args.length});
+    child.stdin?.on('error', error => this.diagnostic('encoder-stdin-error',{code:error.code,message:error.message}));
+    let encodedBytes=0, lastEncodedLog=0;
     child.stdout?.on('data', chunk => {
       if (this.encoder !== child || this.stopRequested) return;
+      encodedBytes += chunk.length;
+      if (Date.now()-lastEncodedLog>3000) {lastEncodedLog=Date.now();this.diagnostic('encoder-output',{pid:child.pid,chunkBytes:chunk.length,totalBytes:encodedBytes,targets:this.targets.size});}
       for (const target of this.targets.values()) {
         const sink = target.child?.stdin;
         if (!sink?.writable || sink.destroyed) continue;
@@ -108,6 +115,7 @@ class MultiOutputManager extends EventEmitter {
     let errorText = '';
     child.stderr?.on('data', chunk => {
       const str = String(chunk);
+      if (/error|failed|invalid|warning|frame=|fps=|bitrate=/i.test(str)) this.diagnostic('encoder-stderr',{pid:child.pid,text:sanitize(str)});
       if (/error|failed|invalid|no capable devices|cannot load/i.test(str)) errorText = sanitize(str);
       this.progressBuffer += str;
       const lines = this.progressBuffer.split(/\r?\n/);
@@ -174,13 +182,15 @@ class MultiOutputManager extends EventEmitter {
       stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true
     });
     target.child = child;
+    this.diagnostic('publisher-spawn',{sourceId:target.id,name:target.name,pid:child.pid});
     target.state = 'connecting';
     target.error = '';
     this.emitStatus('connecting', { sourceId: target.id, name: target.name });
-    child.stdin?.on('error', () => {});
-    let log = '', completed = false, progress = '';
+    child.stdin?.on('error',error=>this.diagnostic('publisher-stdin-error',{sourceId:target.id,code:error.code,message:error.message}));
+    let log = '', completed = false, progress = '', lastProgressLogged=0;
     child.stderr?.on('data', data => {
       const raw = String(data);
+      if (/error|failed|invalid|denied|rejected|refused|io error|unable/i.test(raw) || Date.now()-lastProgressLogged>3000) {lastProgressLogged=Date.now();this.diagnostic('publisher-stderr',{sourceId:target.id,pid:child.pid,text:sanitize(raw)});}
       if (/error|failed|invalid|denied|rejected|refused|io error|unable/i.test(raw)) log = sanitize(raw);
       progress += raw;
       const lines = progress.split(/\r?\n/);
@@ -221,6 +231,8 @@ class MultiOutputManager extends EventEmitter {
     const input = this.encoder?.stdin;
     if (!input?.writable || input.destroyed) return Promise.resolve(false);
     const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    this.inputBytes = (this.inputBytes || 0) + chunk.length;
+    if (Date.now()-(this.lastInputDiagnostic || 0)>3000) {this.lastInputDiagnostic=Date.now();this.diagnostic('encoder-input',{chunkBytes:chunk.length,totalBytes:this.inputBytes,waitingForHeader:this.waitingForHeader,encoderWritableLength:input.writableLength});}
     if (this.waitingForHeader) {
       if (chunk.length < 4 || chunk.readUInt32BE(0) !== EBML_HEADER) return Promise.resolve(false);
       this.waitingForHeader = false;

@@ -1661,6 +1661,9 @@ async function startOutputRecorder() {
     audioBitsPerSecond: currentOutputConfig.audioBitrateKbps * 1000
   });
   outputMediaRecorder = recorder;
+  const pipelineLog = (event, details={}) => console.log('[Stream media]', new Date().toISOString(), event, details);
+  pipelineLog('recorder-starting',{mimeType,canvasWidth:liveProgramCanvas.width,canvasHeight:liveProgramCanvas.height,tracks:outputComposedStream.getTracks().map(t=>({kind:t.kind,enabled:t.enabled,readyState:t.readyState,muted:t.muted})),fps:currentOutputConfig.fps});
+  let rawChunks=0, rawBytes=0, lastMediaLog=0;
   let acceptedEncoderChunks = 0;
   // A static canvas or delayed MediaRecorder timeslice can leave FFmpeg waiting
   // indefinitely on pipe:0. Explicitly flush the first segment and frame.
@@ -1687,14 +1690,18 @@ async function startOutputRecorder() {
   }, 12000);
   recorder.addEventListener('stop', () => window.clearTimeout(inputWatchdog), {once:true});
   recorder.ondataavailable = (event) => {
-    if (!event.data || !event.data.size || !outputActive || outputMediaRecorder !== recorder) return;
+    if (!event.data || !event.data.size || !outputActive || outputMediaRecorder !== recorder) {pipelineLog('recorder-empty-or-stopped',{bytes:event.data?.size||0,state:recorder.state});return;}
+    rawChunks++;rawBytes+=event.data.size;
+    if(Date.now()-lastMediaLog>3000){lastMediaLog=Date.now();pipelineLog('recorder-chunks',{chunks:rawChunks,bytes:rawBytes,lastBytes:event.data.size,acceptedEncoderChunks,recorderState:recorder.state});}
     // Blob.arrayBuffer() and IPC are asynchronous: serialize them so FFmpeg
     // always sees the EBML header before any following WebM media chunks.
     const write = outputChunkWriteQueue.then(async () => {
       if (!outputActive || outputMediaRecorder !== recorder) return;
       const data = await event.data.arrayBuffer();
       if (!outputActive || outputMediaRecorder !== recorder) return;
-      if (await window.liturgiaStream.sendOutputChunk(data)) acceptedEncoderChunks++;
+      const accepted=await window.liturgiaStream.sendOutputChunk(data);
+      if (accepted) acceptedEncoderChunks++;
+      else pipelineLog('ipc-chunk-rejected',{bytes:data.byteLength,recorderState:recorder.state,acceptedEncoderChunks});
     }).catch((error) => {
       if (outputActive && !userStoppingOutput && outputMediaRecorder === recorder) {
         streamStatusDetail.textContent = error.message;
@@ -1705,6 +1712,7 @@ async function startOutputRecorder() {
     void write.finally(() => outputPendingWrites.delete(write));
   };
   recorder.onerror = (event) => {
+    pipelineLog('recorder-error',{message:event.error?.message,code:event.error?.name});
     streamStatusDetail.textContent = event.error?.message || 'The local video input stopped.';
   };
   recorder.start(100);
@@ -2011,7 +2019,12 @@ goLiveButton.addEventListener('click', async () => {
     renderDestinationCards();
   } finally { goLiveButton.disabled = false; }
 });
-window.liturgiaStream.onOutputStatus((status) => { void handleOutputStatus(status); });
+window.liturgiaStream.onOutputStatus((status) => {
+  const safeStatus=JSON.parse(JSON.stringify(status).replace(/rtmps?:\/\/[^"\s]+/gi,'[stream destination]').replace(/FB-[\w?&=%.-]+/gi,'[stream key]'));
+  console.log('[Stream state]',new Date().toISOString(),safeStatus);
+  void handleOutputStatus(status);
+});
+window.liturgiaStream.onDiagnostic(entry => console.log('[Stream FFmpeg]',entry.timestamp,entry.category,entry));
 
 window.addEventListener('beforeunload', () => {
   cameraStream?.getTracks().forEach((track) => track.stop());

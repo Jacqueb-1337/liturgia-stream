@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('liturgiaStream', {
   openFacebookProducer: (mode, sourceId) => ipcRenderer.invoke('stream:facebook:open', mode, sourceId),
   getFacebookProducerSession: (sourceId) => ipcRenderer.invoke('stream:facebook:session', sourceId),
   sendOutputChunk: (data) => ipcRenderer.invoke('stream:output:chunk', data),
+  logDiagnostic: (category, details) => ipcRenderer.invoke('stream:diagnostic', category, details),
+  onDiagnostic: (callback) => {
+    const listener = (_event, entry) => callback(entry);
+    ipcRenderer.on('stream:diagnostics', listener);
+    return () => ipcRenderer.removeListener('stream:diagnostics', listener);
+  },
   stopOutput: (id) => ipcRenderer.invoke('stream:output:stop', id),
   onFacebookHelp: (callback) => {
     const listener = (_event, id) => callback(id);
